@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Black Clover – Licht Boss Fight</title>
+<style>
+body { margin: 0; background: #000; overflow: hidden; font-family: Arial, sans-serif; }
+canvas { display: block; margin: auto; background: #000; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+canvas.width = 1280;
+canvas.height = 720;
+
+const keys = {};
+const mouse = { x: 0, y: 0, down: false, prev: false };
+
+window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left;
+  mouse.y = e.clientY - r.top;
+});
+canvas.addEventListener("mousedown", () => mouse.down = true);
+canvas.addEventListener("mouseup", () => mouse.down = false);
+
+const IMG = {};
+const files = {
+  asta_idle: "asta_idle.png", 
+  asta_attack: "asta_attack.png",
+  noelle_idle: "noelle_idle.png", 
+  noelle_attack: "noelle_attack.png",
+  licht_idle: "licht_idle.png",
+  licht_attack: "licht_attack.png",
+  licht_clone: "licht_clone.png",
+  bg: "clover_castle.png"
+};
+
+let loaded = 0;
+const total = Object.keys(files).length;
+for (const k in files) {
+  const img = new Image();
+  img.onload = () => {
+    loaded++;
+    console.log("✅ Loaded: " + k);
+  };
+  img.onerror = () => {
+    loaded++;
+    console.error("❌ Failed to load: " + k + " - Check filename!");
+  };
+  img.src = files[k];
+  IMG[k] = img;
+}
+
+let state = "title";
+let selected = 0;
+let hitStop = 0;
+let shake = 0;
+let phase = 1;
+let combo = 0;
+let comboTime = 0;
+let cam = 0;
+let player = null;
+let boss = null;
+let enterPrev = false;
+
+const proj = [];
+const clones = [];
+const part = [];
+const dragons = []; // Sea Dragon's Roar
+
+const chars = [
+  { id: "asta", name: "ASTA", col: "#0f0", info: "Anti-Magic" },
+  { id: "noelle", name: "NOELLE", col: "#4af", info: "Water Magic" },
+  { id: "luck", name: "LUCK", col: "#ff0", info: "LOCKED", lock: true }
+];
+
+const plat = [
+  { x: -700, y: 620, w: 2800, h: 120, c: "#2a4" },
+  { x: 300, y: 480, w: 240, h: 20, c: "#4a6" },
+  { x: 740, y: 420, w: 240, h: 20, c: "#4a6" },
+  { x: 480, y: 300, w: 220, h: 20, c: "#4a6" }
+];
+
+function addPart(x, y, col, n) {
+  for (let i = 0; i < n; i++) {
+    part.push({ x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8, t: 40, s: 3 + Math.random() * 5, c: col });
+  }
+}
+
+function updPart() {
+  for (let i = part.length - 1; i >= 0; i--) {
+    const p = part[i];
+    p.x += p.vx; p.y += p.vy; p.vx *= 0.95; p.vy *= 0.95;
+    if (--p.t <= 0) part.splice(i, 1);
+  }
+}
+
+function drawPart() {
+  part.forEach(p => {
+    ctx.globalAlpha = p.t / 40;
+    ctx.fillStyle = p.c;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+class Player {
+  constructor(ch) {
+    this.type = ch.id; this.col = ch.col;
+    this.x = 200; this.y = 500; this.vx = 0; this.vy = 0;
+    this.w = 48; this.h = 64; this.dir = 1; this.ground = false;
+    this.dash = 0; this.dashCooldown = 0;
+    this.hp = 200; this.maxhp = 200;
+    this.cool = 0; this.inv = 0; this.flash = 0;
+    // Special abilities
+    this.specialCooldown = 0;
+    this.demonSlash = 0;
+    // Shield abilities
+    this.shieldActive = 0; // Duration shield is active
+    this.shieldCooldown = 0;
+    this.shieldAngle = 0; // For spiral animation
+  }
+
+  upd() {
+    if (this.hp <= 0) { state = "lose"; return; }
+    if (this.inv > 0) this.inv--;
+    if (this.flash > 0) this.flash--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    if (this.specialCooldown > 0) this.specialCooldown--;
+    if (this.shieldCooldown > 0) this.shieldCooldown--;
+
+    // Shield logic
+    if (this.type === "noelle") {
+      // Sea Dragon's Lair - hold E key
+      if (keys.e && this.shieldCooldown === 0) {
+        this.shieldActive = 999; // Active while holding
+        this.inv = 999; // Invulnerable
+        this.shieldAngle += 0.1; // Rotate spirals
+        // Can move slowly while shield is up
+        if (keys.a) { this.vx = -2; this.dir = -1; }
+        else if (keys.d) { this.vx = 2; this.dir = 1; }
+        else this.vx *= 0.9;
+      } else if (this.shieldActive > 0 && !keys.e) {
+        // Released key - start cooldown
+        this.shieldActive = 0;
+        this.shieldCooldown = 480; // 8 seconds
+      }
+    } else if (this.type === "asta") {
+      // Anti-Magic Shield - press E (automatic 6 second duration)
+      if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
+        this.shieldActive = 360; // 6 seconds
+        this.shieldCooldown = 720; // 12 seconds after it ends
+        addPart(this.x + 24, this.y + 32, "#000", 30);
+        addPart(this.x + 24, this.y + 32, "#f00", 20);
+      }
+      
+      if (this.shieldActive > 0) {
+        this.shieldActive--;
+        this.shieldAngle += 0.15;
+        // Can move normally with shield
+      }
+    }
+
+    // Demon Slash (Asta) - invulnerable dash
+    if (this.demonSlash > 0) {
+      this.demonSlash--;
+      this.inv = 999;
+      if (Math.random() < 0.5) {
+        addPart(this.x + 24, this.y + 32, "#000", 3);
+        addPart(this.x + 24, this.y + 32, "#f00", 2);
+      }
+      this.x += this.vx;
+      this.y += this.vy;
+      
+      // DAMAGE ENEMIES DURING DASH
+      const damage = 60;
+      if (boss && Math.abs(this.x - boss.x) < 70 && Math.abs(this.y - boss.y) < 70) {
+        if (!this.demonSlashHitBoss) {
+          boss.hp -= damage;
+          boss.flash = 5;
+          combo++;
+          comboTime = 120;
+          shake = 8;
+          addPart(boss.x, boss.y, "#ff0", 20);
+          this.demonSlashHitBoss = true;
+        }
+      }
+      
+      clones.forEach(c => {
+        if (c.hp > 0 && Math.abs(this.x - c.x) < 70 && Math.abs(this.y - c.y) < 70) {
+          if (!c.hitByDemonSlash) {
+            c.hp -= damage;
+            combo++;
+            comboTime = 120;
+            addPart(c.x, c.y, "#f0f", 15);
+            c.hitByDemonSlash = true;
+            setTimeout(() => c.hitByDemonSlash = false, 100);
+          }
+        }
+      });
+      
+      keys.ePrev = keys.e;
+      return;
+    }
+
+    // Normal movement (only if not holding Noelle's shield)
+    if (!(this.type === "noelle" && this.shieldActive > 0)) {
+      if (this.dash > 0) {
+        this.dash--; this.inv = this.dash;
+      } else {
+        if (keys.a) { this.vx = -5; this.dir = -1; }
+        else if (keys.d) { this.vx = 5; this.dir = 1; }
+        else this.vx *= 0.85;
+      }
+    }
+
+    if (this.ground && keys[" "]) { this.vy = -16; this.ground = false; addPart(this.x + 24, this.y + 64, "#888", 5); }
+    if (keys.shift && this.dash === 0 && this.dashCooldown === 0 && this.ground) { 
+      this.dash = 12; 
+      this.dashCooldown = 300;
+      this.vx = this.dir * 18; 
+      addPart(this.x + 24, this.y + 32, this.col, 15); 
+    }
+
+    // Special Ability (Q key)
+    if (keys.q && this.specialCooldown === 0) {
+      if (this.type === "asta") {
+        const dx = mouse.x + cam - (this.x + 24);
+        const dy = mouse.y - (this.y + 32);
+        const angle = Math.atan2(dy, dx);
+        this.vx = Math.cos(angle) * 25;
+        this.vy = Math.sin(angle) * 25;
+        this.demonSlash = 30;
+        this.demonSlashHitBoss = false; // Reset hit flag
+        this.specialCooldown = 300;
+        addPart(this.x + 24, this.y + 32, "#000", 20);
+        addPart(this.x + 24, this.y + 32, "#f00", 15);
+      } else if (this.type === "noelle") {
+        dragons.push(new SeaDragon(this.x + 24, this.y + 32));
+        this.specialCooldown = 600;
+        addPart(this.x + 24, this.y + 32, "#4af", 30);
+      }
+    }
+
+    this.vy += 0.8; this.x += this.vx; this.y += this.vy;
+
+    this.ground = false;
+    plat.forEach(p => {
+      if (this.x + this.w > p.x && this.x < p.x + p.w && this.y + this.h > p.y && this.y + this.h - this.vy < p.y + 10) {
+        this.y = p.y - this.h; this.vy = 0; this.ground = true;
+      }
+    });
+
+    if (mouse.down && !mouse.prev && this.cool === 0) {
+      // Noelle can't attack while shield is active
+      if (this.type === "noelle" && this.shieldActive > 0) {
+        // Do nothing
+      } else {
+        this.cool = 10;
+        const a = Math.atan2(mouse.y - (this.y + 32), mouse.x + cam - (this.x + 24));
+        proj.push(new Proj(this.x + 24, this.y + 32, a, this.type, this.col));
+        addPart(this.x + 24, this.y + 32, this.col, 8);
+      }
+    }
+    if (this.cool > 0) this.cool--;
+    if (comboTime > 0) comboTime--; else combo = 0;
+    
+    keys.ePrev = keys.e;
+  }
+
+  checkDemonSlashDamage() {
+    // This function is no longer needed - damage is done in real-time during dash
+  }
+
+  dmg(n) {
+    if (this.inv > 0) return;
+    this.hp -= n; this.inv = 30; this.flash = 10; shake = 10;
+    addPart(this.x + 24, this.y + 32, "#f00", 20);
+    if (this.hp < 0) this.hp = 0;
+  }
+
+  draw() {
+    // Determine sprite based on attack state and time
+    let spr;
+    const attacking = this.cool > 0 && this.cool > 5; // Show attack sprite for first half of cooldown
+    
+    if (this.type === "asta") {
+      spr = attacking ? IMG.asta_attack : IMG.asta_idle;
+    } else {
+      spr = attacking ? IMG.noelle_attack : IMG.noelle_idle;
+    }
+    
+    ctx.save();
+    ctx.translate(this.x + 24, this.y + 32);
+    
+    if (this.flash > 0 && Math.floor(this.flash / 2) % 2 === 0) {
+      ctx.globalAlpha = 0.5; ctx.fillStyle = "#fff"; ctx.fillRect(-24, -32, 48, 64); ctx.globalAlpha = 1;
+    }
+    
+    if (spr.complete && spr.width > 0) {
+      ctx.scale(this.dir, 1); ctx.drawImage(spr, -24, -32, 48, 64);
+    } else {
+      ctx.fillStyle = this.type === "asta" ? "#000" : this.col;
+      ctx.scale(this.dir, 1); ctx.fillRect(-24, -32, 48, 64);
+      ctx.fillStyle = this.type === "asta" ? "#fff" : "#000";
+      ctx.fillRect(-14, -17, 8, 8);
+    }
+    
+    if (this.dash > 0) {
+      ctx.shadowBlur = 20; ctx.shadowColor = this.col; ctx.globalAlpha = 0.3;
+      ctx.fillStyle = this.col; ctx.fillRect(-24, -32, 48, 64);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
+    
+    ctx.restore();
+    
+    // Draw shield if active
+    if (this.shieldActive > 0) {
+      ctx.save();
+      ctx.translate(this.x + 24, this.y + 32);
+      
+      if (this.type === "noelle") {
+        // Blue shield with white spirals
+        ctx.strokeStyle = "#4af";
+        ctx.lineWidth = 4;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // White spirals
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.arc(0, 0, 40 - i * 10, this.shieldAngle + i * Math.PI / 3, this.shieldAngle + i * Math.PI / 3 + Math.PI);
+          ctx.stroke();
+        }
+        
+        // Shield glow
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = "#4af";
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = "#4af";
+        ctx.beginPath();
+        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Black shield with red outline
+        ctx.fillStyle = "#000";
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = "#f00";
+        ctx.lineWidth = 4;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Rotating energy lines
+        ctx.strokeStyle = "#f00";
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.6;
+        for (let i = 0; i < 4; i++) {
+          const angle = this.shieldAngle + i * Math.PI / 2;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * 30, Math.sin(angle) * 30);
+          ctx.lineTo(Math.cos(angle) * 50, Math.sin(angle) * 50);
+          ctx.stroke();
+        }
+      }
+      
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+    
+    ctx.fillStyle = "#000"; ctx.fillRect(this.x - 5, this.y - 15, 58, 8);
+    ctx.fillStyle = "#f00"; ctx.fillRect(this.x - 3, this.y - 13, 54 * (this.hp / this.maxhp), 4);
+  }
+}
+
+class Proj {
+  constructor(x, y, a, t, c) {
+    this.x = x; this.y = y; this.vx = Math.cos(a) * 12; this.vy = Math.sin(a) * 12;
+    this.t = 100; this.own = t === "licht" ? "e" : "p"; this.col = c; this.type = t;
+    this.angle = a;
+  }
+
+  upd() {
+    this.x += this.vx; this.y += this.vy; this.t--;
+
+    if (this.own === "p" && boss && this.x > boss.x - 40 && this.x < boss.x + 40 && this.y > boss.y - 60 && this.y < boss.y + 40) {
+      boss.hp -= 20; boss.flash = 5; this.t = 0; combo++; comboTime = 120; shake = 5; addPart(this.x, this.y, "#ff0", 15);
+    }
+
+    if (this.own === "p") {
+      clones.forEach(c => {
+        if (c.hp > 0 && Math.abs(this.x - c.x) < 20 && Math.abs(this.y - c.y) < 20) {
+          c.hp -= 20; this.t = 0; combo++; comboTime = 120; addPart(this.x, this.y, "#f0f", 12);
+        }
+      });
+    }
+
+    if (this.own === "e" && player && player.inv === 0 && this.x > player.x && this.x < player.x + player.w && this.y > player.y && this.y < player.y + player.h) {
+      player.dmg(15); this.t = 0;
+    }
+  }
+
+  draw() {
+    ctx.save(); ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.shadowBlur = 15; ctx.shadowColor = this.col;
+    
+    if (this.type === "asta") {
+      // Black sword slash - thin rectangle
+      ctx.fillStyle = "#000";
+      ctx.fillRect(-30, -4, 60, 8);
+      ctx.fillStyle = "#333";
+      ctx.fillRect(-30, -2, 60, 4);
+    } else if (this.type === "noelle") {
+      // Bigger water magic circle
+      const spr = IMG.noelle_attack;
+      if (spr.complete && spr.width > 0) {
+        ctx.drawImage(spr, -20, -20, 40, 40);
+      } else {
+        ctx.fillStyle = this.col;
+        ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.fill();
+      }
+    } else {
+      // Licht attacks use licht_attack
+      const spr = IMG.licht_attack;
+      if (spr.complete && spr.width > 0) {
+        ctx.drawImage(spr, -15, -15, 30, 30);
+      } else {
+        ctx.fillStyle = this.col;
+        ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    
+    ctx.shadowBlur = 0; ctx.restore();
+  }
+}
+
+class Boss {
+  constructor() {
+    this.x = 900; this.y = 260; this.tx = 900; this.ty = 260;
+    this.hp = 800; this.maxhp = 800; this.phase = 1;
+    this.timer = 90; this.pattern = 0; this.flash = 0;
+  }
+
+  upd() {
+    if (this.hp <= 0) { state = "win"; return; }
+    if (this.hp < 533) this.phase = 2;
+    if (this.hp < 266) this.phase = 3;
+    phase = Math.max(phase, this.phase);
+    if (this.flash > 0) this.flash--;
+
+    this.timer--;
+    if (this.timer <= 0) {
+      const pts = [{ x: 640, y: 260 }, { x: 420, y: 340 }, { x: 860, y: 340 }, { x: 640, y: 180 }, { x: 500, y: 240 }, { x: 780, y: 240 }];
+      const p = pts[Math.floor(Math.random() * pts.length)];
+      this.tx = p.x; this.ty = p.y;
+      this.attack();
+      this.timer = 90 - (this.phase * 10);
+    }
+
+    this.x += (this.tx - this.x) * 0.05;
+    this.y += (this.ty - this.y) * 0.05;
+  }
+
+  attack() {
+    this.pattern = (this.pattern + 1) % 3;
+    if (this.pattern === 0) {
+      this.fire();
+      if (this.phase >= 2) setTimeout(() => boss && this.fire(), 300);
+    } else if (this.pattern === 1) {
+      for (let i = -1; i <= 1; i++) this.fireAngle(i * 0.3);
+    } else {
+      this.rain();
+      if (this.phase >= 3) setTimeout(() => this.rain(), 500);
+    }
+    if (this.phase === 3 && clones.filter(c => c.hp > 0).length < 4) {
+      clones.push(new Clone(this.x, this.y));
+      clones.push(new Clone(this.x, this.y));
+    }
+    addPart(this.x, this.y, "#80f", 12);
+  }
+
+  fire() {
+    if (!player) return;
+    const a = Math.atan2(player.y - this.y, player.x - this.x);
+    proj.push(new Proj(this.x, this.y, a, "licht", "#f80"));
+  }
+
+  fireAngle(off) {
+    if (!player) return;
+    const a = Math.atan2(player.y - this.y, player.x - this.x) + off;
+    proj.push(new Proj(this.x, this.y, a, "licht", "#f80"));
+  }
+
+  rain() {
+    if (!player) return;
+    for (let i = 0; i < 6; i++) {
+      proj.push(new Proj(player.x + (Math.random() * 400 - 200), -20, Math.PI / 2 + (Math.random() * 0.4 - 0.2), "licht", "#f80"));
+    }
+  }
+
+  draw() {
+    ctx.save(); ctx.translate(this.x, this.y);
+    ctx.shadowBlur = 25; ctx.shadowColor = "#80f";
+    if (this.flash > 0) {
+      ctx.globalAlpha = 0.7; ctx.fillStyle = "#fff"; ctx.fillRect(-50, -70, 100, 120); ctx.globalAlpha = 1;
+    }
+    if (IMG.licht_idle.complete && IMG.licht_idle.width > 0) {
+      ctx.drawImage(IMG.licht_idle, -40, -60, 80, 100);
+    } else {
+      ctx.fillStyle = "#80f"; ctx.fillRect(-40, -60, 80, 100);
+      ctx.fillStyle = "#fff"; ctx.fillRect(-30, -40, 15, 15); ctx.fillRect(15, -40, 15, 15);
+    }
+    ctx.shadowBlur = 0; ctx.restore();
+    const bw = 400, bx = this.x - 200;
+    ctx.fillStyle = "#000"; ctx.fillRect(bx, this.y - 80, bw, 12);
+    ctx.fillStyle = "#f00"; ctx.fillRect(bx + 2, this.y - 78, (bw - 4) * (this.hp / this.maxhp), 8);
+    ctx.fillStyle = "#fff"; ctx.font = "14px Arial"; ctx.textAlign = "center";
+    ctx.fillText("PHASE " + this.phase, this.x, this.y - 90); ctx.textAlign = "left";
+  }
+}
+
+class Clone {
+  constructor(x, y) {
+    this.x = x + (Math.random() * 120 - 60); this.y = y + (Math.random() * 60 - 30);
+    this.hp = 40; this.maxhp = 40; this.cool = Math.random() * 60;
+  }
+  upd() {
+    if (this.hp <= 0) return;
+    this.cool--;
+    if (this.cool <= 0 && Math.random() < 0.03) {
+      if (player) {
+        const a = Math.atan2(player.y - this.y, player.x - this.x);
+        proj.push(new Proj(this.x, this.y, a, "licht", "#f80"));
+      }
+      this.cool = 90;
+    }
+  }
+  draw() {
+    if (this.hp <= 0) return;
+    ctx.save(); ctx.translate(this.x, this.y);
+    ctx.shadowBlur = 10; ctx.shadowColor = "#f0f";
+    if (IMG.licht_clone.complete && IMG.licht_clone.width > 0) {
+      ctx.drawImage(IMG.licht_clone, -20, -20, 40, 40);
+    } else {
+      ctx.fillStyle = "#f0f"; ctx.fillRect(-20, -20, 40, 40);
+    }
+    ctx.shadowBlur = 0; ctx.restore();
+    ctx.fillStyle = "#000"; ctx.fillRect(this.x - 22, this.y - 28, 44, 6);
+    ctx.fillStyle = "#f00"; ctx.fillRect(this.x - 20, this.y - 26, 40 * (this.hp / this.maxhp), 2);
+  }
+}
+
+// Sea Dragon's Roar (Noelle's Ultimate)
+class SeaDragon {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = 300; // 5 seconds
+    this.w = 120;
+    this.h = 60;
+  }
+
+  upd() {
+    this.life--;
+    
+    // Follow mouse
+    const dx = mouse.x + cam - this.x;
+    const dy = mouse.y - this.y;
+    const angle = Math.atan2(dy, dx);
+    this.x += Math.cos(angle) * 4;
+    this.y += Math.sin(angle) * 4;
+    
+    // Damage enemies
+    const damage = 120; // 6x normal attack (20 * 6)
+    if (boss && Math.abs(this.x - boss.x) < 70 && Math.abs(this.y - boss.y) < 50) {
+      if (!this.hitBossThisFrame) {
+        boss.hp -= damage;
+        boss.flash = 5;
+        combo++;
+        comboTime = 120;
+        shake = 8;
+        addPart(boss.x, boss.y, "#4af", 25);
+        this.hitBossThisFrame = true;
+        this.life = Math.min(this.life, 60); // Start fading out
+      }
+    } else {
+      this.hitBossThisFrame = false;
+    }
+    
+    clones.forEach(c => {
+      if (c.hp > 0 && Math.abs(this.x - c.x) < 70 && Math.abs(this.y - c.y) < 50) {
+        if (!c.hitByDragon) {
+          c.hp -= damage;
+          combo++;
+          comboTime = 120;
+          addPart(c.x, c.y, "#4af", 20);
+          c.hitByDragon = true;
+          setTimeout(() => c.hitByDragon = false, 100);
+        }
+      }
+    });
+    
+    // Particles trail
+    if (Math.random() < 0.3) {
+      addPart(this.x, this.y, "#4af", 5);
+      addPart(this.x, this.y, "#fff", 3);
+    }
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    
+    // Dragon body (rectangle)
+    ctx.fillStyle = "#4af";
+    ctx.globalAlpha = Math.min(1, this.life / 60);
+    ctx.fillRect(-60, -30, 120, 60);
+    
+    // Dragon head/mouth (right side)
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(50, -20, 15, 40); // Mouth opening
+    ctx.fillStyle = "#4af";
+    ctx.fillRect(50, -25, 15, 5); // Upper jaw
+    ctx.fillRect(50, 20, 15, 5); // Lower jaw
+    
+    // White eyebrows
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(20, -35, 25, 5); // Left eyebrow
+    ctx.fillRect(20, -40, 5, 10); // Eyebrow angle
+    
+    // Eyes
+    ctx.fillStyle = "#000";
+    ctx.fillRect(25, -25, 8, 8);
+    
+    // Dragon glow
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#4af";
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = "#4af";
+    ctx.fillRect(-60, -30, 120, 60);
+    
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+function drawBG() {
+  const g = ctx.createLinearGradient(0, 0, 0, 720);
+  g.addColorStop(0, "#1a1a3e"); g.addColorStop(1, "#0a0a1a");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 1280, 720);
+  if (IMG.bg.complete && IMG.bg.width > 0) {
+    ctx.globalAlpha = 0.3; ctx.drawImage(IMG.bg, -cam * 0.1, 0, 1600, 720); ctx.globalAlpha = 1;
+  }
+}
+
+function loop() {
+  if (loaded < total) {
+    ctx.fillStyle = "#1a1a3e"; ctx.fillRect(0, 0, 1280, 720);
+    ctx.fillStyle = "#fff"; ctx.font = "32px Arial"; ctx.textAlign = "center";
+    ctx.fillText("Loading... " + loaded + "/" + total, 640, 360); ctx.textAlign = "left";
+    requestAnimationFrame(loop); return;
+  }
+
+  if (hitStop > 0) { hitStop--; requestAnimationFrame(loop); return; }
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (shake > 0) { ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake); shake--; }
+  ctx.clearRect(0, 0, 1280, 720);
+
+  if (state === "title") {
+    drawBG();
+    ctx.fillStyle = "#fd7"; ctx.font = "bold 72px Arial"; ctx.textAlign = "center";
+    ctx.shadowBlur = 20; ctx.shadowColor = "#fd7"; ctx.fillText("BLACK CLOVER", 640, 280); ctx.shadowBlur = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "28px Arial"; ctx.fillText("Boss Fight: Licht", 640, 340);
+    ctx.font = "20px Arial"; ctx.fillStyle = "#888"; ctx.fillText("Press ENTER to begin", 640, 400);
+    if (keys.enter && !enterPrev) state = "select";
+    ctx.textAlign = "left";
+  }
+
+  else if (state === "select") {
+    drawBG();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 42px Arial"; ctx.textAlign = "center";
+    ctx.fillText("SELECT YOUR FIGHTER", 640, 140);
+    chars.forEach((c, i) => {
+      const y = 240 + i * 100, sel = i === selected;
+      ctx.fillStyle = sel ? "rgba(255,215,0,0.2)" : "rgba(255,255,255,0.05)";
+      ctx.fillRect(390, y - 40, 500, 80);
+      ctx.strokeStyle = sel ? "#fd7" : "#666"; ctx.lineWidth = 3; ctx.strokeRect(390, y - 40, 500, 80);
+      ctx.fillStyle = c.lock ? "#666" : (sel ? c.col : "#aaa"); ctx.font = "bold 32px Arial";
+      ctx.fillText(c.name, 490, y + 5);
+      ctx.font = "18px Arial"; ctx.fillStyle = c.lock ? "#444" : "#888"; ctx.fillText(c.info, 490, y + 30);
+    });
+    ctx.font = "18px Arial"; ctx.fillStyle = "#888"; ctx.fillText("W/S: Select | ENTER: Confirm", 640, 600);
+    if (keys.w && !keys.wp) { selected = (selected + 2) % 3; keys.wp = true; }
+    if (!keys.w) keys.wp = false;
+    if (keys.s && !keys.sp) { selected = (selected + 1) % 3; keys.sp = true; }
+    if (!keys.s) keys.sp = false;
+    if (keys.enter && !enterPrev && !chars[selected].lock) {
+      player = new Player(chars[selected]); boss = new Boss();
+      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; phase = 1; combo = 0; state = "play";
+    }
+    ctx.textAlign = "left";
+  }
+
+  else if (state === "play") {
+    cam = Math.max(0, player.x - 640);
+    drawBG();
+    ctx.save(); ctx.translate(-cam, 0);
+    plat.forEach(p => {
+      ctx.fillStyle = p.c; ctx.fillRect(p.x, p.y, p.w, p.h);
+      ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.fillRect(p.x, p.y, p.w, 3);
+    });
+    player.upd(); boss.upd();
+    clones.forEach(c => c.upd());
+    for (let i = dragons.length - 1; i >= 0; i--) {
+      dragons[i].upd();
+      if (dragons[i].life <= 0) dragons.splice(i, 1);
+    }
+    for (let i = proj.length - 1; i >= 0; i--) { proj[i].upd(); if (proj[i].t <= 0) proj.splice(i, 1); }
+    updPart(); drawPart();
+    clones.forEach(c => c.draw()); 
+    dragons.forEach(d => d.draw());
+    boss.draw(); player.draw();
+    proj.forEach(p => p.draw());
+    ctx.restore();
+
+    const hw = 300;
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(20, 20, hw + 10, 35);
+    ctx.fillStyle = "#f00"; ctx.fillRect(25, 25, hw * (player.hp / player.maxhp), 25);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(25, 25, hw, 25);
+    ctx.fillStyle = "#fff"; ctx.font = "16px Arial"; ctx.fillText("HP: " + Math.floor(player.hp) + "/" + player.maxhp, 30, 43);
+
+    const bw = 600, bx = 340;
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(bx - 5, 20, bw + 10, 40);
+    ctx.fillStyle = "#80f"; ctx.fillRect(bx, 25, bw * (boss.hp / boss.maxhp), 30);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(bx, 25, bw, 30);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial"; ctx.textAlign = "center";
+    ctx.fillText("LICHT - Phase " + boss.phase, 640, 45); ctx.textAlign = "left";
+
+    if (combo > 1) {
+      ctx.fillStyle = "#ff0"; ctx.font = "bold 32px Arial"; ctx.textAlign = "right";
+      ctx.fillText(combo + " HIT COMBO!", 1250, 100); ctx.textAlign = "left";
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "14px Arial";
+    ctx.fillText("A/D: Move | SPACE: Jump | SHIFT: Dash | CLICK: Attack | Q: Ultimate | E: Shield", 20, 700);
+    
+    // Dash cooldown indicator
+    if (player.dashCooldown > 0) {
+      const cooldownPercent = player.dashCooldown / 300;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(20, 600, 120, 30);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(25, 605, 110, 20);
+      ctx.fillStyle = "#0ff";
+      ctx.fillRect(25, 605, 110 * (1 - cooldownPercent), 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(25, 605, 110, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      ctx.fillText("DASH: " + Math.ceil(player.dashCooldown / 60) + "s", 30, 618);
+    }
+    
+    // Special ability cooldown
+    if (player.specialCooldown > 0) {
+      const maxCool = player.type === "asta" ? 300 : 600;
+      const cooldownPercent = player.specialCooldown / maxCool;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(150, 600, 150, 30);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(155, 605, 140, 20);
+      ctx.fillStyle = player.type === "asta" ? "#f00" : "#4af";
+      ctx.fillRect(155, 605, 140 * (1 - cooldownPercent), 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(155, 605, 140, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      const abilityName = player.type === "asta" ? "DEMON SLASH" : "SEA DRAGON";
+      ctx.fillText(abilityName + ": " + Math.ceil(player.specialCooldown / 60) + "s", 160, 618);
+    }
+    
+    // Shield cooldown/active indicator
+    if (player.shieldActive > 0 && player.type === "asta") {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(310, 600, 150, 30);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(315, 605, 140, 20);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(315, 605, 140 * (player.shieldActive / 360), 20);
+      ctx.strokeStyle = "#f00";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(315, 605, 140, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      ctx.fillText("SHIELD: " + Math.ceil(player.shieldActive / 60) + "s", 320, 618);
+    } else if (player.shieldCooldown > 0) {
+      const maxCool = player.type === "asta" ? 720 : 480;
+      const cooldownPercent = player.shieldCooldown / maxCool;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(310, 600, 150, 30);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(315, 605, 140, 20);
+      ctx.fillStyle = player.type === "asta" ? "#f00" : "#4af";
+      ctx.fillRect(315, 605, 140 * (1 - cooldownPercent), 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(315, 605, 140, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      ctx.fillText("SHIELD: " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
+    } else if (player.type === "noelle" && player.shieldActive > 0) {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(310, 600, 150, 30);
+      ctx.fillStyle = "#4af";
+      ctx.fillRect(315, 605, 140, 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(315, 605, 140, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      ctx.fillText("SHIELD: ACTIVE", 320, 618);
+    }
+  }
+
+  else {
+    drawBG();
+    ctx.fillStyle = state === "win" ? "#0f0" : "#f00";
+    ctx.font = "bold 80px Arial"; ctx.textAlign = "center";
+    ctx.shadowBlur = 30; ctx.shadowColor = ctx.fillStyle;
+    ctx.fillText(state === "win" ? "VICTORY!" : "DEFEAT", 640, 280); ctx.shadowBlur = 0;
+    ctx.font = "32px Arial"; ctx.fillStyle = "#fff"; ctx.fillText("Phase Reached: " + phase, 640, 350);
+    if (combo > 5) { ctx.fillStyle = "#ff0"; ctx.fillText("Max Combo: " + combo, 640, 400); }
+    ctx.font = "24px Arial"; ctx.fillStyle = "#888";
+    ctx.fillText("Press ENTER to return to menu", 640, 500);
+    if (keys.enter && !enterPrev) state = "title";
+    ctx.textAlign = "left";
+  }
+
+  enterPrev = keys.enter;
+  mouse.prev = mouse.down;
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
