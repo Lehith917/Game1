@@ -73,7 +73,8 @@ let enterPrev = false;
 const proj = [];
 const clones = [];
 const part = [];
-const dragons = []; // Sea Dragon's Roar
+const dragons = [];
+const homingProj = []; // Asta's homing barrage
 
 const chars = [
   { id: "asta", name: "ASTA", col: "#0f0", info: "Anti-Magic" },
@@ -119,15 +120,15 @@ class Player {
     this.x = 200; this.y = 500; this.vx = 0; this.vy = 0;
     this.w = 48; this.h = 64; this.dir = 1; this.ground = false;
     this.dash = 0; this.dashCooldown = 0;
-    this.hp = 200; this.maxhp = 200;
+    this.hp = 100; this.maxhp = 100; // Changed from 200 to 100
     this.cool = 0; this.inv = 0; this.flash = 0;
     // Special abilities
     this.specialCooldown = 0;
     this.demonSlash = 0;
     // Shield abilities
-    this.shieldActive = 0; // Duration shield is active
+    this.shieldActive = 0;
     this.shieldCooldown = 0;
-    this.shieldAngle = 0; // For spiral animation
+    this.shieldAngle = 0;
   }
 
   upd() {
@@ -155,18 +156,25 @@ class Player {
         this.shieldCooldown = 480; // 8 seconds
       }
     } else if (this.type === "asta") {
-      // Anti-Magic Shield - press E (automatic 6 second duration)
+      // Black Meteorite - press E (4 homing attacks)
       if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
-        this.shieldActive = 360; // 6 seconds
-        this.shieldCooldown = 720; // 12 seconds after it ends
-        addPart(this.x + 24, this.y + 32, "#000", 30);
-        addPart(this.x + 24, this.y + 32, "#f00", 20);
+        this.shieldActive = 0; // Not a shield anymore
+        this.shieldCooldown = 420; // 7 seconds cooldown
+        
+        // Launch 4 homing projectiles
+        for (let i = 0; i < 4; i++) {
+          setTimeout(() => {
+            const angle = (Math.PI * 2 * i / 4);
+            homingProj.push(new HomingProjectile(this.x + 24, this.y + 32, angle));
+            addPart(this.x + 24, this.y + 32, "#000", 10);
+            addPart(this.x + 24, this.y + 32, "#f00", 8);
+          }, i * 100); // 0.1s delay between each
+        }
       }
       
       if (this.shieldActive > 0) {
         this.shieldActive--;
         this.shieldAngle += 0.15;
-        // Can move normally with shield
       }
     }
 
@@ -265,7 +273,7 @@ class Player {
       if (this.type === "noelle" && this.shieldActive > 0) {
         // Do nothing
       } else {
-        this.cool = 10;
+        this.cool = 120; // 2 seconds cooldown (60fps * 2)
         const a = Math.atan2(mouse.y - (this.y + 32), mouse.x + cam - (this.x + 24));
         proj.push(new Proj(this.x + 24, this.y + 32, a, this.type, this.col));
         addPart(this.x + 24, this.y + 32, this.col, 8);
@@ -278,7 +286,7 @@ class Player {
   }
 
   checkDemonSlashDamage() {
-    // This function is no longer needed - damage is done in real-time during dash
+    // This function is no longer needed
   }
 
   dmg(n) {
@@ -323,69 +331,41 @@ class Player {
     
     ctx.restore();
     
-    // Draw shield if active
-    if (this.shieldActive > 0) {
-      ctx.save();
-      ctx.translate(this.x + 24, this.y + 32);
-      
-      if (this.type === "noelle") {
+      // Draw shield if active - ONLY NOELLE
+      if (this.shieldActive > 0 && this.type === "noelle") {
+        ctx.save();
+        ctx.translate(this.x + 24, this.y + 32);
+        
         // Blue shield with white spirals
         ctx.strokeStyle = "#4af";
-        ctx.lineWidth = 4;
-        ctx.globalAlpha = 0.6;
+        ctx.lineWidth = 5;
+        ctx.globalAlpha = 0.7;
         ctx.beginPath();
-        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.arc(0, 0, 65, 0, Math.PI * 2);
         ctx.stroke();
         
         // White spirals
         ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        for (let i = 0; i < 3; i++) {
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 4; i++) {
           ctx.beginPath();
-          ctx.arc(0, 0, 40 - i * 10, this.shieldAngle + i * Math.PI / 3, this.shieldAngle + i * Math.PI / 3 + Math.PI);
+          ctx.arc(0, 0, 50 - i * 12, this.shieldAngle + i * Math.PI / 4, this.shieldAngle + i * Math.PI / 4 + Math.PI);
           ctx.stroke();
         }
         
         // Shield glow
-        ctx.shadowBlur = 30;
+        ctx.shadowBlur = 35;
         ctx.shadowColor = "#4af";
         ctx.globalAlpha = 0.3;
         ctx.fillStyle = "#4af";
         ctx.beginPath();
-        ctx.arc(0, 0, 50, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Black shield with red outline
-        ctx.fillStyle = "#000";
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.arc(0, 0, 65, 0, Math.PI * 2);
         ctx.fill();
         
-        ctx.strokeStyle = "#f00";
-        ctx.lineWidth = 4;
-        ctx.globalAlpha = 0.8;
-        ctx.beginPath();
-        ctx.arc(0, 0, 50, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        // Rotating energy lines
-        ctx.strokeStyle = "#f00";
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.6;
-        for (let i = 0; i < 4; i++) {
-          const angle = this.shieldAngle + i * Math.PI / 2;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(angle) * 30, Math.sin(angle) * 30);
-          ctx.lineTo(Math.cos(angle) * 50, Math.sin(angle) * 50);
-          ctx.stroke();
-        }
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+        ctx.restore();
       }
-      
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
-      ctx.restore();
-    }
     
     ctx.fillStyle = "#000"; ctx.fillRect(this.x - 5, this.y - 15, 58, 8);
     ctx.fillStyle = "#f00"; ctx.fillRect(this.x - 3, this.y - 13, 54 * (this.hp / this.maxhp), 4);
@@ -665,6 +645,106 @@ class SeaDragon {
   }
 }
 
+// Homing Projectile (Asta's Black Meteorite)
+class HomingProjectile {
+  constructor(x, y, angle) {
+    this.x = x;
+    this.y = y;
+    this.vx = Math.cos(angle) * 8;
+    this.vy = Math.sin(angle) * 8;
+    this.life = 300; // 5 seconds
+    this.homingTime = 300; // Homes for 5 seconds
+    this.speed = 8;
+    this.target = null;
+  }
+
+  upd() {
+    this.life--;
+    this.homingTime--;
+    
+    // Find target if homing time is active
+    if (this.homingTime > 0) {
+      // Find closest enemy
+      let closest = null;
+      let closestDist = 999999;
+      
+      if (boss && boss.hp > 0) {
+        const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+        if (dist < closestDist) {
+          closest = boss;
+          closestDist = dist;
+        }
+      }
+      
+      clones.forEach(c => {
+        if (c.hp > 0) {
+          const dist = Math.hypot(c.x - this.x, c.y - this.y);
+          if (dist < closestDist) {
+            closest = c;
+            closestDist = dist;
+          }
+        }
+      });
+      
+      // Home towards target
+      if (closest) {
+        const angle = Math.atan2(closest.y - this.y, closest.x - this.x);
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+      }
+    }
+    
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Check collision with boss
+    if (boss && Math.abs(this.x - boss.x) < 40 && Math.abs(this.y - boss.y) < 50) {
+      boss.hp -= 30;
+      boss.flash = 5;
+      this.life = 0;
+      combo++;
+      comboTime = 120;
+      shake = 5;
+      addPart(this.x, this.y, "#ff0", 20);
+    }
+    
+    // Check collision with clones
+    clones.forEach(c => {
+      if (c.hp > 0 && Math.abs(this.x - c.x) < 25 && Math.abs(this.y - c.y) < 25) {
+        c.hp -= 30;
+        this.life = 0;
+        combo++;
+        comboTime = 120;
+        addPart(this.x, this.y, "#f0f", 15);
+      }
+    });
+    
+    // Particle trail
+    if (Math.random() < 0.4) {
+      addPart(this.x, this.y, "#000", 2);
+      addPart(this.x, this.y, "#f00", 1);
+    }
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(Math.atan2(this.vy, this.vx));
+    
+    // Black slash with red outline
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#f00";
+    ctx.fillStyle = "#000";
+    ctx.fillRect(-25, -6, 50, 12);
+    ctx.strokeStyle = "#f00";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-25, -6, 50, 12);
+    
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
 function drawBG() {
   const g = ctx.createLinearGradient(0, 0, 0, 720);
   g.addColorStop(0, "#1a1a3e"); g.addColorStop(1, "#0a0a1a");
@@ -718,7 +798,7 @@ function loop() {
     if (!keys.s) keys.sp = false;
     if (keys.enter && !enterPrev && !chars[selected].lock) {
       player = new Player(chars[selected]); boss = new Boss();
-      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; phase = 1; combo = 0; state = "play";
+      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; homingProj.length = 0; phase = 1; combo = 0; state = "play";
     }
     ctx.textAlign = "left";
   }
@@ -737,10 +817,15 @@ function loop() {
       dragons[i].upd();
       if (dragons[i].life <= 0) dragons.splice(i, 1);
     }
+    for (let i = homingProj.length - 1; i >= 0; i--) {
+      homingProj[i].upd();
+      if (homingProj[i].life <= 0) homingProj.splice(i, 1);
+    }
     for (let i = proj.length - 1; i >= 0; i--) { proj[i].upd(); if (proj[i].t <= 0) proj.splice(i, 1); }
     updPart(); drawPart();
     clones.forEach(c => c.draw()); 
     dragons.forEach(d => d.draw());
+    homingProj.forEach(h => h.draw());
     boss.draw(); player.draw();
     proj.forEach(p => p.draw());
     ctx.restore();
@@ -763,7 +848,8 @@ function loop() {
       ctx.fillText(combo + " HIT COMBO!", 1250, 100); ctx.textAlign = "left";
     }
     ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "14px Arial";
-    ctx.fillText("A/D: Move | SPACE: Jump | SHIFT: Dash | CLICK: Attack | Q: Ultimate | E: Shield", 20, 700);
+    const abilityText = player.type === "asta" ? "Q: Demon Slash | E: Black Meteorite" : "Q: Sea Dragon | E: Shield";
+    ctx.fillText("A/D: Move | SPACE: Jump | SHIFT: Dash | CLICK: Attack | " + abilityText, 20, 700);
     
     // Dash cooldown indicator
     if (player.dashCooldown > 0) {
@@ -801,46 +887,53 @@ function loop() {
       ctx.fillText(abilityName + ": " + Math.ceil(player.specialCooldown / 60) + "s", 160, 618);
     }
     
-    // Shield cooldown/active indicator
+    // Shield/ability cooldown
     if (player.shieldActive > 0 && player.type === "asta") {
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(310, 600, 150, 30);
-      ctx.fillStyle = "#666";
-      ctx.fillRect(315, 605, 140, 20);
-      ctx.fillStyle = "#000";
-      ctx.fillRect(315, 605, 140 * (player.shieldActive / 360), 20);
-      ctx.strokeStyle = "#f00";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(315, 605, 140, 20);
-      ctx.fillStyle = "#fff";
-      ctx.font = "12px Arial";
-      ctx.fillText("SHIELD: " + Math.ceil(player.shieldActive / 60) + "s", 320, 618);
+      // Not used anymore
     } else if (player.shieldCooldown > 0) {
-      const maxCool = player.type === "asta" ? 720 : 480;
+      const maxCool = player.type === "asta" ? 420 : 480;
       const cooldownPercent = player.shieldCooldown / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(310, 600, 150, 30);
+      ctx.fillRect(310, 600, 170, 30);
       ctx.fillStyle = "#666";
-      ctx.fillRect(315, 605, 140, 20);
+      ctx.fillRect(315, 605, 160, 20);
       ctx.fillStyle = player.type === "asta" ? "#f00" : "#4af";
-      ctx.fillRect(315, 605, 140 * (1 - cooldownPercent), 20);
+      ctx.fillRect(315, 605, 160 * (1 - cooldownPercent), 20);
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
-      ctx.strokeRect(315, 605, 140, 20);
+      ctx.strokeRect(315, 605, 160, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
-      ctx.fillText("SHIELD: " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
+      const abilityName = player.type === "asta" ? "METEORITE" : "SHIELD";
+      ctx.fillText(abilityName + ": " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
     } else if (player.type === "noelle" && player.shieldActive > 0) {
       ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(310, 600, 150, 30);
+      ctx.fillRect(310, 600, 170, 30);
       ctx.fillStyle = "#4af";
-      ctx.fillRect(315, 605, 140, 20);
+      ctx.fillRect(315, 605, 160, 20);
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
-      ctx.strokeRect(315, 605, 140, 20);
+      ctx.strokeRect(315, 605, 160, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
       ctx.fillText("SHIELD: ACTIVE", 320, 618);
+    }
+    
+    // Attack cooldown indicator
+    if (player.cool > 0) {
+      const coolPercent = player.cool / 120;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(490, 600, 140, 30);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(495, 605, 130, 20);
+      ctx.fillStyle = player.col;
+      ctx.fillRect(495, 605, 130 * (1 - coolPercent), 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(495, 605, 130, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px Arial";
+      ctx.fillText("ATTACK: " + (player.cool / 60).toFixed(1) + "s", 500, 618);
     }
   }
 
