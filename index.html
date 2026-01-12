@@ -20,8 +20,16 @@ canvas.height = 720;
 const keys = {};
 const mouse = { x: 0, y: 0, down: false, prev: false };
 
-window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === "escape") keys.escape = true;
+  if (e.key.toLowerCase() === "backspace") keys.backspace = true;
+});
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+  if (e.key.toLowerCase() === "escape") keys.escape = false;
+  if (e.key.toLowerCase() === "backspace") keys.backspace = false;
+});
 canvas.addEventListener("mousemove", e => {
   const r = canvas.getBoundingClientRect();
   mouse.x = e.clientX - r.left;
@@ -59,6 +67,7 @@ for (const k in files) {
 }
 
 let state = "title";
+let menuState = "main";
 let selected = 0;
 let hitStop = 0;
 let shake = 0;
@@ -70,16 +79,67 @@ let player = null;
 let boss = null;
 let enterPrev = false;
 
+const stats = {
+  wins: 0,
+  losses: 0,
+  astaPlays: 0,
+  noellePlays: 0,
+  luckPlays: 0
+};
+
+const achievements = {
+  winAsta: false,
+  winNoelle: false,
+  winLuck: false,
+  viewCredits: false,
+  winLowHp: false,
+  winNoHit: false,
+  useTransform: false,
+  win10: false,
+  win50: false
+};
+
+const achievementList = [
+  { id: "winAsta", name: "Asta's Victory", desc: "Win with Asta" },
+  { id: "winNoelle", name: "Noelle's Victory", desc: "Win with Noelle" },
+  { id: "winLuck", name: "Luck's Victory", desc: "Win with Luck" },
+  { id: "viewCredits", name: "Credits Viewer", desc: "View the credits" },
+  { id: "winLowHp", name: "Close Call", desc: "Win with ≤10 HP" },
+  { id: "winNoHit", name: "Flawless Victory", desc: "Win without being hit" },
+  { id: "useTransform", name: "Transformation", desc: "Use any transformation" },
+  { id: "win10", name: "Veteran", desc: "Get 10 wins" },
+  { id: "win50", name: "Legend", desc: "Get 50 wins" }
+];
+
+let wasHit = false;
+let achievementPopups = [];
+
+function unlockAchievement(id) {
+  if (!achievements[id]) {
+    achievements[id] = true;
+    const ach = achievementList.find(a => a.id === id);
+    if (ach) {
+      achievementPopups.push({
+        name: ach.name,
+        desc: ach.desc,
+        time: 300,
+        y: -100
+      });
+    }
+  }
+}
+
 const proj = [];
 const clones = [];
 const part = [];
 const dragons = [];
 const homingProj = [];
+const lightningPulses = [];
 
 const chars = [
   { id: "asta", name: "ASTA", col: "#0f0", info: "Anti-Magic" },
   { id: "noelle", name: "NOELLE", col: "#4af", info: "Water Magic" },
-  { id: "luck", name: "LUCK", col: "#ff0", info: "LOCKED", lock: true }
+  { id: "luck", name: "LUCK", col: "#0ff", info: "Lightning Magic" }
 ];
 
 const plat = [
@@ -106,6 +166,16 @@ function updPart() {
 function drawPart() {
   part.forEach(p => {
     ctx.globalAlpha = p.t / 40;
+    
+    // Draw outline if particle has one
+    if (p.outline) {
+      ctx.strokeStyle = p.outline;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    
     ctx.fillStyle = p.c;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2);
@@ -114,13 +184,74 @@ function drawPart() {
   ctx.globalAlpha = 1;
 }
 
+function updateAchievementPopups() {
+  for (let i = achievementPopups.length - 1; i >= 0; i--) {
+    const popup = achievementPopups[i];
+    popup.time--;
+    
+    // Slide in animation
+    if (popup.y < 20) {
+      popup.y += 3;
+    }
+    
+    if (popup.time <= 0) {
+      achievementPopups.splice(i, 1);
+    }
+  }
+}
+
+function drawAchievementPopups() {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  
+  achievementPopups.forEach((popup, index) => {
+    const x = 950;
+    const y = popup.y + (index * 90);
+    
+    // Background
+    ctx.fillStyle = "rgba(0,0,0,0.9)";
+    ctx.fillRect(x, y, 310, 80);
+    
+    // Border with glow
+    ctx.strokeStyle = "#fd7";
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#fd7";
+    ctx.strokeRect(x, y, 310, 80);
+    ctx.shadowBlur = 0;
+    
+    // Achievement Unlocked text
+    ctx.fillStyle = "#fd7";
+    ctx.font = "bold 16px Arial";
+    ctx.fillText("ACHIEVEMENT UNLOCKED!", x + 10, y + 25);
+    
+    // Achievement name
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 20px Arial";
+    ctx.fillText(popup.name, x + 10, y + 50);
+    
+    // Achievement description
+    ctx.fillStyle = "#aaa";
+    ctx.font = "14px Arial";
+    ctx.fillText(popup.desc, x + 10, y + 68);
+    
+    // Checkmark
+    ctx.fillStyle = "#0f0";
+    ctx.font = "bold 30px Arial";
+    ctx.fillText("✓", x + 270, y + 50);
+  });
+  
+  ctx.restore();
+}
+
 class Player {
   constructor(ch) {
     this.type = ch.id; this.col = ch.col;
     this.x = 200; this.y = 500; this.vx = 0; this.vy = 0;
     this.w = 48; this.h = 64; this.dir = 1; this.ground = false;
-    this.dash = 0; this.dashCooldown = 0;
-    this.hp = 100; this.maxhp = 100;
+    this.dash = 0; this.dashCooldown = 0; this.dashCount = 0;
+    this.hp = ch.id === "noelle" ? 200 : 100;
+    this.maxhp = ch.id === "noelle" ? 200 : 100;
     this.cool = 0; this.inv = 0; this.flash = 0;
     this.specialCooldown = 0;
     this.demonSlash = 0;
@@ -132,15 +263,58 @@ class Player {
     this.transformTime = 0;
     this.transformUsed = false;
     this.doubleJumped = false;
+    this.luckOrbPairs = 0;
+    this.luckOrbTimer = 0;
+    this.luckDashPhase = 0;
   }
 
   upd() {
-    if (this.hp <= 0) { state = "lose"; return; }
+    if (this.hp <= 0) { 
+      state = "lose"; 
+      stats.losses++;
+      return; 
+    }
     if (this.inv > 0) this.inv--;
     if (this.flash > 0) this.flash--;
     if (this.dashCooldown > 0) this.dashCooldown--;
     if (this.specialCooldown > 0) this.specialCooldown--;
     if (this.shieldCooldown > 0) this.shieldCooldown--;
+    if (this.luckOrbTimer > 0) this.luckOrbTimer--;
+    
+    if (this.luckDashPhase > 0) {
+      this.luckDashPhase--;
+      this.inv = 999;
+      
+      if (this.luckDashPhase === 60 || this.luckDashPhase === 30) {
+        if (boss) {
+          const dx = boss.x - this.x;
+          const dy = boss.y - this.y;
+          const dist = Math.hypot(dx, dy);
+          this.x = boss.x;
+          this.y = boss.y;
+          boss.hp -= 20;
+          boss.flash = 5;
+          combo++;
+          comboTime = 120;
+          shake = 8;
+          addPart(boss.x, boss.y, "#0ff", 20);
+          this.transformMeter = Math.min(600, this.transformMeter + 20);
+        }
+      }
+      
+      if (this.luckDashPhase === 45 || this.luckDashPhase === 15) {
+        this.x = 200;
+        this.y = 500;
+      }
+      
+      if (this.luckDashPhase === 0) {
+        this.shieldCooldown = 300;
+      }
+      
+      keys.ePrev = keys.e;
+      keys.rPrev = keys.r;
+      return;
+    }
     
     if (this.transformed && this.transformTime > 0) {
       this.transformTime--;
@@ -152,12 +326,12 @@ class Player {
     // Transformation activation (R key)
     if (keys.r && !keys.rPrev && this.transformMeter >= 600 && !this.transformUsed) {
       this.transformed = true;
-      this.transformTime = 1800; // 30 seconds
+      this.transformTime = 1800;
       this.transformUsed = true;
       this.transformMeter = 600;
+      unlockAchievement("useTransform");
       
       if (this.type === "asta") {
-        // Black Asta transformation - delete all enemy projectiles and kill clones
         for (let i = proj.length - 1; i >= 0; i--) {
           if (proj[i].own === "e") {
             addPart(proj[i].x, proj[i].y, "#f00", 10);
@@ -174,7 +348,6 @@ class Player {
           }
         });
         
-        // Visual pulse effect
         for (let i = 0; i < 50; i++) {
           const angle = (Math.PI * 2 * i) / 50;
           const dist = 150;
@@ -187,7 +360,6 @@ class Player {
         }
         shake = 15;
       } else {
-        // Noelle transformation
         addPart(this.x + 24, this.y + 32, "#4af", 30);
         shake = 8;
       }
@@ -195,7 +367,6 @@ class Player {
 
     if (this.onGround) this.doubleJumped = false;
 
-    // Shield logic
     if (this.type === "noelle") {
       if (keys.e && this.shieldCooldown === 0) {
         this.shieldActive = 999;
@@ -207,6 +378,11 @@ class Player {
       } else if (this.shieldActive > 0 && !keys.e) {
         this.shieldActive = 0;
         this.shieldCooldown = 480;
+      }
+    } else if (this.type === "luck") {
+      if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
+        this.luckDashPhase = 75;
+        addPart(this.x + 24, this.y + 32, "#0ff", 20);
       }
     } else if (this.type === "asta") {
       if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
@@ -276,7 +452,9 @@ class Player {
       if (this.dash > 0) {
         this.dash--; this.inv = this.dash;
       } else {
-        const speedMult = (this.type === "noelle" && this.transformed) ? 1.03 : 1;
+        let speedMult = 1;
+        if (this.type === "noelle" && this.transformed) speedMult = 1.03;
+        if (this.type === "luck" && this.transformed) speedMult = 1.05;
         if (keys.a) { this.vx = -5 * speedMult; this.dir = -1; }
         else if (keys.d) { this.vx = 5 * speedMult; this.dir = 1; }
         else this.vx *= 0.85;
@@ -290,17 +468,45 @@ class Player {
     } else if (!this.onGround && keys[" "] && !keys.spacePrev && this.type === "noelle" && this.transformed && !this.doubleJumped) {
       this.vy = -16;
       this.doubleJumped = true;
-      addPart(this.x + 24, this.y + 32, "#4af", 15);
+      // Double jump particles underneath
+      for (let i = 0; i < 15; i++) {
+        part.push({
+          x: this.x + 24,
+          y: this.y + 64,
+          vx: (Math.random() - 0.5) * 6,
+          vy: Math.random() * 4,
+          t: 30,
+          s: 4 + Math.random() * 4,
+          c: "#4af"
+        });
+      }
     }
     
-    if (keys.shift && this.dash === 0 && this.dashCooldown === 0 && this.onGround) { 
-      this.dash = 12; 
-      this.dashCooldown = 300;
-      this.vx = this.dir * 18; 
-      addPart(this.x + 24, this.y + 32, this.col, 15); 
+    if (keys.shift && this.dash === 0 && this.dashCooldown === 0 && this.onGround) {
+      if (this.type === "luck" && this.transformed) {
+        this.dash = 12;
+        this.dashCount++;
+        if (this.dashCount >= 2) {
+          this.dashCooldown = 300;
+          this.dashCount = 0;
+        }
+        this.vx = this.dir * 18;
+        addPart(this.x + 24, this.y + 32, this.col, 15);
+      } else {
+        this.dash = 12;
+        this.dashCooldown = 300;
+        this.vx = this.dir * 18;
+        addPart(this.x + 24, this.y + 32, this.col, 15);
+      }
+    }
+    
+    if (this.type === "luck" && this.onGround && this.dashCount > 0 && this.dash === 0) {
+      if (!this.transformed) {
+        this.dashCooldown = 300;
+        this.dashCount = 0;
+      }
     }
 
-    // Special Ability (Q key)
     if (keys.q && this.specialCooldown === 0) {
       if (this.type === "asta") {
         const dx = mouse.x + cam - (this.x + 24);
@@ -331,11 +537,27 @@ class Player {
 
     if (mouse.down && !mouse.prev && this.cool === 0) {
       if (this.type === "noelle" && this.shieldActive > 0) {
-        // Do nothing
       } else {
-        this.cool = 120;
-        const a = Math.atan2(mouse.y - (this.y + 32), mouse.x + cam - (this.x + 24));
-        proj.push(new Proj(this.x + 24, this.y + 32, a, this.type, this.col, this.transformed));
+        if (this.type === "noelle") this.cool = 90;
+        else if (this.type === "luck") {
+          this.cool = 72;
+          const a = Math.atan2(mouse.y - (this.y + 32), mouse.x + cam - (this.x + 24));
+          proj.push(new Proj(this.x + 24, this.y + 32, a, this.type, this.col, this.transformed));
+          setTimeout(() => {
+            if (player && player.type === "luck") {
+              const a2 = Math.atan2(mouse.y - (player.y + 32), mouse.x + cam - (player.x + 24));
+              proj.push(new Proj(player.x + 24, player.y + 32, a2, player.type, player.col, player.transformed));
+              addPart(player.x + 24, player.y + 32, player.col, 8);
+            }
+          }, 100);
+        } else {
+          this.cool = 120;
+        }
+        
+        if (this.type !== "luck") {
+          const a = Math.atan2(mouse.y - (this.y + 32), mouse.x + cam - (this.x + 24));
+          proj.push(new Proj(this.x + 24, this.y + 32, a, this.type, this.col, this.transformed));
+        }
         addPart(this.x + 24, this.y + 32, this.col, 8);
       }
     }
@@ -345,6 +567,7 @@ class Player {
     keys.ePrev = keys.e;
     keys.rPrev = keys.r;
     keys.spacePrev = keys[" "];
+    keys.tPrev = keys.t;
   }
 
   dmg(n) {
@@ -352,6 +575,7 @@ class Player {
     this.hp -= n; this.inv = 30; this.flash = 10; shake = 10;
     addPart(this.x + 24, this.y + 32, "#f00", 20);
     if (this.hp < 0) this.hp = 0;
+    wasHit = true;
   }
 
   draw() {
@@ -386,28 +610,66 @@ class Player {
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     }
     
-    // Transformation visual effect
+    ctx.restore();
+    
+    // Transformation visual effect with particles
     if (this.transformed) {
       if (this.type === "asta") {
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = "#f00";
-        ctx.globalAlpha = 0.2;
-        ctx.fillStyle = "#000";
-        ctx.fillRect(-30, -38, 60, 76);
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
-      } else {
-        ctx.shadowBlur = 25;
-        ctx.shadowColor = "#4af";
-        ctx.globalAlpha = 0.2;
-        ctx.fillStyle = "#4af";
-        ctx.fillRect(-30, -38, 60, 76);
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
+        // Black particles with red outline
+        if (Math.random() < 0.15) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 30 + Math.random() * 15;
+          const px = this.x + 24 + Math.cos(angle) * dist;
+          const py = this.y + 32 + Math.sin(angle) * dist;
+          part.push({
+            x: px,
+            y: py,
+            vx: Math.cos(angle) * -2,
+            vy: Math.sin(angle) * -2 - 1,
+            t: 25,
+            s: 3 + Math.random() * 3,
+            c: "#000",
+            outline: "#f00"
+          });
+        }
+      } else if (this.type === "noelle") {
+        // Light blue particles with white outline
+        if (Math.random() < 0.15) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 30 + Math.random() * 15;
+          const px = this.x + 24 + Math.cos(angle) * dist;
+          const py = this.y + 32 + Math.sin(angle) * dist;
+          part.push({
+            x: px,
+            y: py,
+            vx: Math.cos(angle) * -2,
+            vy: Math.sin(angle) * -2 - 1,
+            t: 25,
+            s: 3 + Math.random() * 3,
+            c: "#4af",
+            outline: "#fff"
+          });
+        }
+      } else if (this.type === "luck") {
+        // Cyan/neon blue particles
+        if (Math.random() < 0.15) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 30 + Math.random() * 15;
+          const px = this.x + 24 + Math.cos(angle) * dist;
+          const py = this.y + 32 + Math.sin(angle) * dist;
+          part.push({
+            x: px,
+            y: py,
+            vx: Math.cos(angle) * -2,
+            vy: Math.sin(angle) * -2 - 1,
+            t: 25,
+            s: 3 + Math.random() * 3,
+            c: "#0ff",
+            outline: "#fff"
+          });
+        }
       }
     }
-    
-    ctx.restore();
     
     if (this.shieldActive > 0 && this.type === "noelle") {
       ctx.save();
@@ -447,11 +709,12 @@ class Player {
 }
 
 class Proj {
-  constructor(x, y, a, t, c, transformed) {
+  constructor(x, y, a, t, c, transformed, isOrb) {
     this.x = x; this.y = y; this.vx = Math.cos(a) * 12; this.vy = Math.sin(a) * 12;
     this.t = 100; this.own = t === "licht" ? "e" : "p"; this.col = c; this.type = t;
     this.angle = a;
     this.transformed = transformed || false;
+    this.isOrb = isOrb || false;
   }
 
   upd() {
@@ -460,8 +723,9 @@ class Proj {
     if (this.own === "p" && boss) {
       if (this.x > boss.x - 40 && this.x < boss.x + 40 && this.y > boss.y - 60 && this.y < boss.y + 40) {
         let damage = 20;
-        if (this.type === "asta" && this.transformed) damage = 21; // 5% boost
-        if (this.type === "noelle" && this.transformed) damage = 20.4; // 2% boost (rounds to 20)
+        if (this.isOrb) damage = 5;
+        if (this.type === "asta" && this.transformed) damage = 21;
+        if (this.type === "noelle" && this.transformed) damage = 20.4;
         boss.hp -= damage;
         boss.flash = 5;
         this.t = 0;
@@ -477,6 +741,7 @@ class Proj {
       clones.forEach(c => {
         if (c.hp > 0 && Math.abs(this.x - c.x) < 25 && Math.abs(this.y - c.y) < 25) {
           let damage = 20;
+          if (this.isOrb) damage = 5;
           if (this.type === "asta" && this.transformed) damage = 21;
           if (this.type === "noelle" && this.transformed) damage = 20.4;
           c.hp -= damage;
@@ -510,10 +775,18 @@ class Proj {
     } else if (this.type === "noelle") {
       const spr = IMG.noelle_attack;
       if (spr.complete && spr.width > 0) {
-        ctx.drawImage(spr, -20, -20, 40, 40);
+        ctx.drawImage(spr, -25, -25, 50, 50);
       } else {
         ctx.fillStyle = this.col;
-        ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI * 2); ctx.fill();
+      }
+    } else if (this.type === "luck") {
+      if (this.isOrb) {
+        ctx.fillStyle = this.col;
+        ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = this.col;
+        ctx.fillRect(-25, -4, 50, 8);
       }
     } else {
       const spr = IMG.licht_attack;
@@ -534,14 +807,36 @@ class Boss {
     this.x = 900; this.y = 260; this.tx = 900; this.ty = 260;
     this.hp = 800; this.maxhp = 800; this.phase = 1;
     this.timer = 90; this.pattern = 0; this.flash = 0;
+    this.stunned = 0;
   }
 
   upd() {
-    if (this.hp <= 0) { state = "win"; return; }
+    if (this.hp <= 0) { 
+      state = "win"; 
+      stats.wins++;
+      
+      // Achievement checks
+      if (player) {
+        if (player.type === "asta") unlockAchievement("winAsta");
+        if (player.type === "noelle") unlockAchievement("winNoelle");
+        if (player.type === "luck") unlockAchievement("winLuck");
+        if (player.hp <= 10) unlockAchievement("winLowHp");
+        if (!wasHit) unlockAchievement("winNoHit");
+      }
+      
+      if (stats.wins >= 10) unlockAchievement("win10");
+      if (stats.wins >= 50) unlockAchievement("win50");
+      
+      return; 
+    }
     if (this.hp < 533) this.phase = 2;
     if (this.hp < 266) this.phase = 3;
     phase = Math.max(phase, this.phase);
     if (this.flash > 0) this.flash--;
+    if (this.stunned > 0) {
+      this.stunned--;
+      return;
+    }
 
     this.timer--;
     if (this.timer <= 0) {
@@ -596,6 +891,11 @@ class Boss {
   draw() {
     ctx.save(); ctx.translate(this.x, this.y);
     ctx.shadowBlur = 25; ctx.shadowColor = "#80f";
+    
+    if (this.stunned > 0 && Math.floor(this.stunned / 5) % 2 === 0) {
+      ctx.globalAlpha = 0.5;
+    }
+    
     if (this.flash > 0) {
       ctx.globalAlpha = 0.7; ctx.fillStyle = "#fff"; ctx.fillRect(-50, -70, 100, 120); ctx.globalAlpha = 1;
     }
@@ -605,7 +905,9 @@ class Boss {
       ctx.fillStyle = "#80f"; ctx.fillRect(-40, -60, 80, 100);
       ctx.fillStyle = "#fff"; ctx.fillRect(-30, -40, 15, 15); ctx.fillRect(15, -40, 15, 15);
     }
-    ctx.shadowBlur = 0; ctx.restore();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+    ctx.restore();
     const bw = 400, bx = this.x - 200;
     ctx.fillStyle = "#000"; ctx.fillRect(bx, this.y - 80, bw, 12);
     ctx.fillStyle = "#f00"; ctx.fillRect(bx + 2, this.y - 78, (bw - 4) * (this.hp / this.maxhp), 8);
@@ -618,9 +920,14 @@ class Clone {
   constructor(x, y) {
     this.x = x + (Math.random() * 120 - 60); this.y = y + (Math.random() * 60 - 30);
     this.hp = 40; this.maxhp = 40; this.cool = Math.random() * 60;
+    this.stunned = 0;
   }
   upd() {
     if (this.hp <= 0) return;
+    if (this.stunned > 0) {
+      this.stunned--;
+      return;
+    }
     this.cool--;
     if (this.cool <= 0 && Math.random() < 0.03) {
       if (player) {
@@ -633,15 +940,116 @@ class Clone {
   draw() {
     if (this.hp <= 0) return;
     ctx.save(); ctx.translate(this.x, this.y);
+    
+    if (this.stunned > 0 && Math.floor(this.stunned / 5) % 2 === 0) {
+      ctx.globalAlpha = 0.5;
+    }
+    
     ctx.shadowBlur = 10; ctx.shadowColor = "#f0f";
     if (IMG.licht_clone.complete && IMG.licht_clone.width > 0) {
       ctx.drawImage(IMG.licht_clone, -20, -20, 40, 40);
     } else {
       ctx.fillStyle = "#f0f"; ctx.fillRect(-20, -20, 40, 40);
     }
-    ctx.shadowBlur = 0; ctx.restore();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+    ctx.restore();
     ctx.fillStyle = "#000"; ctx.fillRect(this.x - 22, this.y - 28, 44, 6);
     ctx.fillStyle = "#f00"; ctx.fillRect(this.x - 20, this.y - 26, 40 * (this.hp / this.maxhp), 2);
+  }
+}
+
+class LightningPulse {
+  constructor(x, y, angle) {
+    this.x = x;
+    this.y = y;
+    this.vx = Math.cos(angle) * 15;
+    this.vy = Math.sin(angle) * 15;
+    this.life = 100;
+    this.pullRadius = 320;
+    this.angle = angle;
+  }
+
+  upd() {
+    this.life--;
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    const pulseRange = this.pullRadius;
+    
+    if (boss && Math.abs(this.x - boss.x) < 40 && Math.abs(this.y - boss.y) < 50) {
+      boss.hp -= 20;
+      boss.flash = 5;
+      boss.stunned = 120;
+      this.life = 0;
+      combo++;
+      comboTime = 120;
+      shake = 8;
+      addPart(this.x, this.y, "#0ff", 25);
+      if (player) player.transformMeter = Math.min(600, player.transformMeter + 20);
+    } else if (boss && Math.hypot(boss.x - this.x, boss.y - this.y) < pulseRange) {
+      const pullAngle = Math.atan2(this.y - boss.y, this.x - boss.x);
+      boss.x += Math.cos(pullAngle) * 3;
+      boss.y += Math.sin(pullAngle) * 3;
+    }
+    
+    clones.forEach(c => {
+      if (c.hp > 0) {
+        if (Math.abs(this.x - c.x) < 40 && Math.abs(this.y - c.y) < 40) {
+          c.hp -= 20;
+          c.stunned = 120;
+          this.life = 0;
+          combo++;
+          comboTime = 120;
+          addPart(this.x, this.y, "#0ff", 20);
+          if (player) player.transformMeter = Math.min(600, player.transformMeter + 20);
+        } else if (Math.hypot(c.x - this.x, c.y - this.y) < pulseRange) {
+          const pullAngle = Math.atan2(this.y - c.y, this.x - c.x);
+          c.x += Math.cos(pullAngle) * 3;
+          c.y += Math.sin(pullAngle) * 3;
+        }
+      }
+    });
+    
+    if (Math.random() < 0.3) {
+      addPart(this.x, this.y, "#0ff", 3);
+      addPart(this.x, this.y, "#000", 2);
+    }
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#0ff";
+    
+    ctx.fillStyle = "#0ff";
+    ctx.beginPath();
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.fill();
+    
+    for (let i = 0; i < 4; i++) {
+      const stripeAngle = (i * Math.PI / 2);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(stripeAngle) * 10, Math.sin(stripeAngle) * 10);
+      ctx.lineTo(Math.cos(stripeAngle) * 25, Math.sin(stripeAngle) * 25);
+      ctx.stroke();
+    }
+    
+    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = "#0ff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 40, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 }
 
@@ -859,9 +1267,133 @@ function loop() {
     ctx.fillStyle = "#fd7"; ctx.font = "bold 72px Arial"; ctx.textAlign = "center";
     ctx.shadowBlur = 20; ctx.shadowColor = "#fd7"; ctx.fillText("BLACK CLOVER", 640, 280); ctx.shadowBlur = 0;
     ctx.fillStyle = "#fff"; ctx.font = "28px Arial"; ctx.fillText("Boss Fight: Licht", 640, 340);
-    ctx.font = "20px Arial"; ctx.fillStyle = "#888"; ctx.fillText("Press ENTER to begin", 640, 400);
-    if (keys.enter && !enterPrev) state = "select";
+    ctx.font = "20px Arial"; ctx.fillStyle = "#888"; ctx.fillText("Press ENTER to continue", 640, 400);
+    if (keys.enter && !enterPrev) { state = "menu"; menuState = "main"; selected = 0; }
     ctx.textAlign = "left";
+  }
+
+  else if (state === "menu") {
+    drawBG();
+    
+    if (menuState === "main") {
+      ctx.fillStyle = "#fd7"; ctx.font = "bold 56px Arial"; ctx.textAlign = "center";
+      ctx.shadowBlur = 15; ctx.shadowColor = "#fd7"; ctx.fillText("MAIN MENU", 640, 180); ctx.shadowBlur = 0;
+      
+      const menuOptions = ["PLAY", "ACHIEVEMENTS", "STATS", "CREDITS"];
+      menuOptions.forEach((opt, i) => {
+        const y = 280 + i * 80;
+        const sel = i === selected;
+        ctx.fillStyle = sel ? "rgba(255,215,0,0.2)" : "rgba(255,255,255,0.05)";
+        ctx.fillRect(390, y - 40, 500, 70);
+        ctx.strokeStyle = sel ? "#fd7" : "#666"; ctx.lineWidth = 3; ctx.strokeRect(390, y - 40, 500, 70);
+        ctx.fillStyle = sel ? "#fd7" : "#aaa"; ctx.font = "bold 36px Arial";
+        ctx.fillText(opt, 640, y + 5);
+      });
+      
+      ctx.font = "18px Arial"; ctx.fillStyle = "#888"; ctx.fillText("W/S: Select | ENTER: Confirm", 640, 660);
+      
+      if (keys.w && !keys.wp) { selected = (selected + 3) % 4; keys.wp = true; }
+      if (!keys.w) keys.wp = false;
+      if (keys.s && !keys.sp) { selected = (selected + 1) % 4; keys.sp = true; }
+      if (!keys.s) keys.sp = false;
+      
+      if (keys.enter && !enterPrev) {
+        if (selected === 0) { state = "select"; selected = 0; }
+        else if (selected === 1) { menuState = "achievements"; }
+        else if (selected === 2) { menuState = "stats"; }
+        else if (selected === 3) { menuState = "credits"; }
+      }
+      ctx.textAlign = "left";
+    }
+    
+    else if (menuState === "achievements") {
+      ctx.fillStyle = "#fff"; ctx.font = "bold 48px Arial"; ctx.textAlign = "center";
+      ctx.fillText("ACHIEVEMENTS", 640, 120);
+      
+      const unlockedCount = Object.values(achievements).filter(a => a).length;
+      const totalCount = achievementList.length;
+      ctx.font = "32px Arial"; ctx.fillStyle = "#fd7";
+      ctx.textAlign = "right";
+      ctx.fillText(unlockedCount + "/" + totalCount, 1200, 120);
+      
+      ctx.textAlign = "left";
+      ctx.font = "24px Arial";
+      let y = 200;
+      achievementList.forEach((ach, i) => {
+        const unlocked = achievements[ach.id];
+        ctx.fillStyle = unlocked ? "rgba(255,215,0,0.2)" : "rgba(100,100,100,0.1)";
+        ctx.fillRect(100, y - 30, 1080, 50);
+        
+        ctx.strokeStyle = unlocked ? "#fd7" : "#444";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(100, y - 30, 1080, 50);
+        
+        ctx.fillStyle = unlocked ? "#fd7" : "#666";
+        ctx.font = "bold 22px Arial";
+        ctx.fillText(ach.name, 120, y);
+        
+        ctx.fillStyle = unlocked ? "#fff" : "#555";
+        ctx.font = "18px Arial";
+        ctx.fillText(ach.desc, 500, y);
+        
+        if (unlocked) {
+          ctx.fillStyle = "#0f0";
+          ctx.font = "20px Arial";
+          ctx.fillText("✓", 1140, y);
+        }
+        
+        y += 55;
+      });
+      
+      ctx.textAlign = "center";
+      ctx.font = "20px Arial"; ctx.fillStyle = "#888";
+      ctx.fillText("Press ESC to return", 640, 680);
+      if (keys.escape || keys.backspace) { menuState = "main"; selected = 1; }
+      ctx.textAlign = "left";
+    }
+    
+    else if (menuState === "stats") {
+      ctx.fillStyle = "#fff"; ctx.font = "bold 48px Arial"; ctx.textAlign = "center";
+      ctx.fillText("STATISTICS", 640, 120);
+      
+      ctx.font = "32px Arial"; ctx.fillStyle = "#aaa";
+      ctx.fillText("Wins: " + stats.wins, 640, 240);
+      ctx.fillText("Losses: " + stats.losses, 640, 300);
+      
+      const totalPlays = stats.astaPlays + stats.noellePlays + stats.luckPlays;
+      let mostUsed = "None";
+      if (totalPlays > 0) {
+        const maxPlays = Math.max(stats.astaPlays, stats.noellePlays, stats.luckPlays);
+        if (stats.astaPlays === maxPlays) mostUsed = "Asta";
+        else if (stats.noellePlays === maxPlays) mostUsed = "Noelle";
+        else mostUsed = "Luck";
+      }
+      ctx.fillText("Most Used: " + mostUsed, 640, 360);
+      
+      ctx.font = "24px Arial"; ctx.fillStyle = "#888";
+      ctx.fillText("Press ESC to return", 640, 650);
+      if (keys.escape || keys.backspace) { menuState = "main"; selected = 2; }
+      ctx.textAlign = "left";
+    }
+    
+    else if (menuState === "credits") {
+      ctx.fillStyle = "#fff"; ctx.font = "bold 48px Arial"; ctx.textAlign = "center";
+      ctx.fillText("CREDITS", 640, 120);
+      
+      ctx.font = "36px Arial"; ctx.fillStyle = "#fd7";
+      ctx.fillText("Created By", 640, 300);
+      ctx.font = "42px Arial"; ctx.fillStyle = "#fff";
+      ctx.fillText("Lehith Suryadevara", 640, 370);
+      
+      ctx.font = "20px Arial"; ctx.fillStyle = "#888";
+      ctx.fillText("Press ESC to return", 640, 650);
+      if (keys.escape || keys.backspace) { 
+        menuState = "main"; 
+        selected = 3;
+        unlockAchievement("viewCredits");
+      }
+      ctx.textAlign = "left";
+    }
   }
 
   else if (state === "select") {
@@ -884,7 +1416,11 @@ function loop() {
     if (!keys.s) keys.sp = false;
     if (keys.enter && !enterPrev && !chars[selected].lock) {
       player = new Player(chars[selected]); boss = new Boss();
-      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; homingProj.length = 0; phase = 1; combo = 0; state = "play";
+      wasHit = false;
+      if (chars[selected].id === "asta") stats.astaPlays++;
+      else if (chars[selected].id === "noelle") stats.noellePlays++;
+      else if (chars[selected].id === "luck") stats.luckPlays++;
+      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; homingProj.length = 0; lightningPulses.length = 0; phase = 1; combo = 0; state = "play";
     }
     ctx.textAlign = "left";
   }
@@ -907,11 +1443,17 @@ function loop() {
       homingProj[i].upd();
       if (homingProj[i].life <= 0) homingProj.splice(i, 1);
     }
+    for (let i = lightningPulses.length - 1; i >= 0; i--) {
+      lightningPulses[i].upd();
+      if (lightningPulses[i].life <= 0) lightningPulses.splice(i, 1);
+    }
     for (let i = proj.length - 1; i >= 0; i--) { proj[i].upd(); if (proj[i].t <= 0) proj.splice(i, 1); }
     updPart(); drawPart();
+    updateAchievementPopups();
     clones.forEach(c => c.draw()); 
     dragons.forEach(d => d.draw());
     homingProj.forEach(h => h.draw());
+    lightningPulses.forEach(lp => lp.draw());
     boss.draw(); player.draw();
     proj.forEach(p => p.draw());
     ctx.restore();
@@ -934,10 +1476,11 @@ function loop() {
       ctx.fillText(combo + " HIT COMBO!", 1250, 100); ctx.textAlign = "left";
     }
     ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "14px Arial";
-    const abilityText = player.type === "asta" ? "Q: Demon Slash | E: Black Meteorite | R: Black Form" : "Q: Sea Dragon | E: Shield | R: Valkyrie Dress";
+    const abilityText = player.type === "asta" ? "Q: Demon Slash | E: Black Meteorite | R: Black Form" : 
+                        player.type === "noelle" ? "Q: Sea Dragon | E: Shield | R: Valkyrie Dress" :
+                        "T: Lightning Pulse | E: Lightning Dash | R: True Lightning";
     ctx.fillText("A/D: Move | SPACE: Jump | SHIFT: Dash | CLICK: Attack | " + abilityText, 20, 700);
     
-    // Dash cooldown indicator
     if (player.dashCooldown > 0) {
       const cooldownPercent = player.dashCooldown / 300;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
@@ -954,43 +1497,46 @@ function loop() {
       ctx.fillText("DASH: " + Math.ceil(player.dashCooldown / 60) + "s", 30, 618);
     }
     
-    // Special ability cooldown
     if (player.specialCooldown > 0) {
-      const maxCool = player.type === "asta" ? 300 : 600;
+      let maxCool = 300;
+      if (player.type === "noelle") maxCool = 600;
+      if (player.type === "luck") maxCool = 240;
       const cooldownPercent = player.specialCooldown / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(150, 600, 150, 30);
       ctx.fillStyle = "#666";
       ctx.fillRect(155, 605, 140, 20);
-      ctx.fillStyle = player.type === "asta" ? "#f00" : "#4af";
+      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
+      ctx.fillStyle = coolCol;
       ctx.fillRect(155, 605, 140 * (1 - cooldownPercent), 20);
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
       ctx.strokeRect(155, 605, 140, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
-      const abilityName = player.type === "asta" ? "DEMON SLASH" : "SEA DRAGON";
+      const abilityName = player.type === "asta" ? "DEMON SLASH" : (player.type === "luck" ? "LIGHTNING PULSE" : "SEA DRAGON");
       ctx.fillText(abilityName + ": " + Math.ceil(player.specialCooldown / 60) + "s", 160, 618);
     }
     
-    // Shield/ability cooldown
     if (player.shieldActive > 0 && player.type === "asta") {
-      // Not used anymore
     } else if (player.shieldCooldown > 0) {
-      const maxCool = player.type === "asta" ? 420 : 480;
+      let maxCool = 420;
+      if (player.type === "noelle") maxCool = 480;
+      if (player.type === "luck") maxCool = 300;
       const cooldownPercent = player.shieldCooldown / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(310, 600, 170, 30);
       ctx.fillStyle = "#666";
       ctx.fillRect(315, 605, 160, 20);
-      ctx.fillStyle = player.type === "asta" ? "#f00" : "#4af";
+      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
+      ctx.fillStyle = coolCol;
       ctx.fillRect(315, 605, 160 * (1 - cooldownPercent), 20);
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
       ctx.strokeRect(315, 605, 160, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
-      const abilityName = player.type === "asta" ? "METEORITE" : "SHIELD";
+      const abilityName = player.type === "asta" ? "METEORITE" : (player.type === "luck" ? "LIGHTNING DASH" : "SHIELD");
       ctx.fillText(abilityName + ": " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
     } else if (player.type === "noelle" && player.shieldActive > 0) {
       ctx.fillStyle = "rgba(0,0,0,0.7)";
@@ -1005,9 +1551,11 @@ function loop() {
       ctx.fillText("SHIELD: ACTIVE", 320, 618);
     }
     
-    // Attack cooldown indicator
     if (player.cool > 0) {
-      const coolPercent = player.cool / 120;
+      let maxCool = 120;
+      if (player.type === "noelle") maxCool = 90;
+      if (player.type === "luck") maxCool = 72;
+      const coolPercent = player.cool / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(490, 600, 140, 30);
       ctx.fillStyle = "#666";
@@ -1022,8 +1570,7 @@ function loop() {
       ctx.fillText("ATTACK: " + (player.cool / 60).toFixed(1) + "s", 500, 618);
     }
     
-    // Transformation meter
-    const transformColor = player.type === "asta" ? "#f00" : "#4af";
+    const transformColor = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
     ctx.fillStyle = "rgba(0,0,0,0.7)";
     ctx.fillRect(950, 600, 300, 40);
     ctx.fillStyle = "#666";
@@ -1036,7 +1583,7 @@ function loop() {
     ctx.fillStyle = "#fff";
     ctx.font = "14px Arial";
     ctx.textAlign = "center";
-    const transformText = player.transformed ? "TRANSFORMED!" : (player.transformMeter >= 600 ? "R: TRANSFORM" : "TRANSFORM");
+    const transformText = player.transformed ? "TRANSFORMED!" : (player.transformUsed ? "ALREADY USED" : (player.transformMeter >= 600 ? "R: TRANSFORM" : "TRANSFORM"));
     ctx.fillText(transformText, 1100, 625);
     ctx.textAlign = "left";
     
@@ -1047,6 +1594,9 @@ function loop() {
       ctx.fillText("Time: " + Math.ceil(player.transformTime / 60) + "s", 1100, 607);
       ctx.textAlign = "left";
     }
+    
+    // Draw achievement popups
+    drawAchievementPopups();
   }
 
   else {
@@ -1059,7 +1609,7 @@ function loop() {
     if (combo > 5) { ctx.fillStyle = "#ff0"; ctx.fillText("Max Combo: " + combo, 640, 400); }
     ctx.font = "24px Arial"; ctx.fillStyle = "#888";
     ctx.fillText("Press ENTER to return to menu", 640, 500);
-    if (keys.enter && !enterPrev) state = "title";
+    if (keys.enter && !enterPrev) { state = "menu"; menuState = "main"; selected = 0; }
     ctx.textAlign = "left";
   }
 
