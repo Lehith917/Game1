@@ -21,14 +21,23 @@ const keys = {};
 const mouse = { x: 0, y: 0, down: false, prev: false };
 
 window.addEventListener("keydown", e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key.toLowerCase() === "escape") keys.escape = true;
-  if (e.key.toLowerCase() === "backspace") keys.backspace = true;
+  const key = e.key.toLowerCase();
+  keys[key] = true;
+  
+  // Queue Yami's Q ability directly from keydown event
+  if (player && player.type === "yami" && key === 'q' && player.specialCooldown === 0) {
+    console.log("Queueing Yami Q ability!");
+    queuedYamiQ = true;
+  }
+  
+  if (key === "escape") keys.escape = true;
+  if (key === "backspace") keys.backspace = true;
 });
 window.addEventListener("keyup", e => {
-  keys[e.key.toLowerCase()] = false;
-  if (e.key.toLowerCase() === "escape") keys.escape = false;
-  if (e.key.toLowerCase() === "backspace") keys.backspace = false;
+  const key = e.key.toLowerCase();
+  keys[key] = false;
+  if (key === "escape") keys.escape = false;
+  if (key === "backspace") keys.backspace = false;
 });
 canvas.addEventListener("mousemove", e => {
   const r = canvas.getBoundingClientRect();
@@ -84,7 +93,8 @@ const stats = {
   losses: 0,
   astaPlays: 0,
   noellePlays: 0,
-  luckPlays: 0
+  luckPlays: 0,
+  yamiPlays: 0
 };
 
 const achievements = {
@@ -96,6 +106,7 @@ const achievements = {
   winNoHit: false,
   useTransform: false,
   win10: false,
+  win25: false,
   win50: false
 };
 
@@ -108,11 +119,16 @@ const achievementList = [
   { id: "winNoHit", name: "Flawless Victory", desc: "Win without being hit" },
   { id: "useTransform", name: "Transformation", desc: "Use any transformation" },
   { id: "win10", name: "Veteran", desc: "Get 10 wins" },
+  { id: "win25", name: "Dark Magic Unlock", desc: "Get 25 wins - Unlocks Yami" },
   { id: "win50", name: "Legend", desc: "Get 50 wins" }
 ];
 
 let wasHit = false;
 let achievementPopups = [];
+let invertScreen = 0;
+let blackHoles = [];
+let cheatMenuOpen = false;
+let queuedYamiQ = false;
 
 function unlockAchievement(id) {
   if (!achievements[id]) {
@@ -139,7 +155,8 @@ const lightningPulses = [];
 const chars = [
   { id: "asta", name: "ASTA", col: "#0f0", info: "Anti-Magic" },
   { id: "noelle", name: "NOELLE", col: "#4af", info: "Water Magic" },
-  { id: "luck", name: "LUCK", col: "#0ff", info: "Lightning Magic" }
+  { id: "luck", name: "LUCK", col: "#0ff", info: "Lightning Magic" },
+  { id: "yami", name: "YAMI", col: "#000", info: "Dark Magic", locked: true }
 ];
 
 const plat = [
@@ -250,8 +267,8 @@ class Player {
     this.x = 200; this.y = 500; this.vx = 0; this.vy = 0;
     this.w = 48; this.h = 64; this.dir = 1; this.ground = false;
     this.dash = 0; this.dashCooldown = 0; this.dashCount = 0;
-    this.hp = ch.id === "noelle" ? 200 : 100;
-    this.maxhp = ch.id === "noelle" ? 200 : 100;
+    this.hp = ch.id === "noelle" ? 200 : (ch.id === "yami" ? 150 : 100);
+    this.maxhp = ch.id === "noelle" ? 200 : (ch.id === "yami" ? 150 : 100);
     this.cool = 0; this.inv = 0; this.flash = 0;
     this.specialCooldown = 0;
     this.demonSlash = 0;
@@ -266,9 +283,58 @@ class Player {
     this.luckOrbPairs = 0;
     this.luckOrbTimer = 0;
     this.luckDashPhase = 0;
+    this.blackHoleActive = 0;
   }
 
   upd() {
+    // Check Yami Q FIRST, before ANY returns
+    if (this.type === "yami" && queuedYamiQ) {
+      console.log("=== EXECUTING YAMI Q ===");
+      queuedYamiQ = false;
+      this.specialCooldown = 480;
+      invertScreen = 15;
+      
+      // Kill all clones
+      console.log("Total clones:", clones.length);
+      let clonesKilled = 0;
+      clones.forEach(c => {
+        if (c.hp > 0) {
+          c.hp = 0;
+          addPart(c.x, c.y, "#000", 25);
+          combo++;
+          comboTime = 120;
+          clonesKilled++;
+        }
+      });
+      
+      console.log("Clones killed:", clonesKilled);
+      
+      // Damage boss
+      if (boss) {
+        console.log("Boss HP before:", boss.hp);
+        boss.hp -= 125;
+        boss.flash = 10;
+        combo++;
+        comboTime = 120;
+        shake = 15;
+        addPart(boss.x, boss.y, "#000", 30);
+        console.log("Boss HP after:", boss.hp);
+      }
+      
+      // Visual effects
+      for (let i = 0; i < 20; i++) {
+        const angle = (Math.PI * 2 * i) / 20;
+        const dist = 200;
+        addPart(
+          640 + Math.cos(angle) * dist,
+          360 + Math.sin(angle) * dist,
+          "#000",
+          10
+        );
+      }
+      console.log("=== YAMI Q COMPLETE ===");
+    }
+    
     if (this.hp <= 0) { 
       state = "lose"; 
       stats.losses++;
@@ -280,6 +346,7 @@ class Player {
     if (this.specialCooldown > 0) this.specialCooldown--;
     if (this.shieldCooldown > 0) this.shieldCooldown--;
     if (this.luckOrbTimer > 0) this.luckOrbTimer--;
+    if (this.blackHoleActive > 0) this.blackHoleActive--;
     
     if (this.luckDashPhase > 0) {
       this.luckDashPhase--;
@@ -292,13 +359,13 @@ class Player {
           const dist = Math.hypot(dx, dy);
           this.x = boss.x;
           this.y = boss.y;
-          boss.hp -= 20;
+          boss.hp -= 18;
           boss.flash = 5;
           combo++;
           comboTime = 120;
           shake = 8;
           addPart(boss.x, boss.y, "#0ff", 20);
-          this.transformMeter = Math.min(600, this.transformMeter + 20);
+          this.transformMeter = Math.min(600, this.transformMeter + 18);
         }
       }
       
@@ -313,6 +380,7 @@ class Player {
       
       keys.ePrev = keys.e;
       keys.rPrev = keys.r;
+      keys.qPrev = keys.q;
       return;
     }
     
@@ -378,6 +446,13 @@ class Player {
       } else if (this.shieldActive > 0 && !keys.e) {
         this.shieldActive = 0;
         this.shieldCooldown = 480;
+      }
+    } else if (this.type === "yami") {
+      if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
+        this.blackHoleActive = 360;
+        this.shieldCooldown = 360;
+        blackHoles.push(new BlackHole(this.x + 24, this.y - 40));
+        addPart(this.x + 24, this.y - 40, "#000", 20);
       }
     } else if (this.type === "luck") {
       if (keys.e && !keys.ePrev && this.shieldCooldown === 0) {
@@ -445,6 +520,7 @@ class Player {
       
       keys.ePrev = keys.e;
       keys.rPrev = keys.r;
+      keys.qPrev = keys.q;
       return;
     }
 
@@ -550,6 +626,8 @@ class Player {
               addPart(player.x + 24, player.y + 32, player.col, 8);
             }
           }, 100);
+        } else if (this.type === "yami") {
+          this.cool = 150;
         } else {
           this.cool = 120;
         }
@@ -568,6 +646,7 @@ class Player {
     keys.rPrev = keys.r;
     keys.spacePrev = keys[" "];
     keys.tPrev = keys.t;
+    keys.qPrev = keys.q;
   }
 
   dmg(n) {
@@ -723,6 +802,7 @@ class Proj {
     if (this.own === "p" && boss) {
       if (this.x > boss.x - 40 && this.x < boss.x + 40 && this.y > boss.y - 60 && this.y < boss.y + 40) {
         let damage = 20;
+        if (this.type === "yami") damage = 45;
         if (this.isOrb) damage = 5;
         if (this.type === "asta" && this.transformed) damage = 21;
         if (this.type === "noelle" && this.transformed) damage = 20.4;
@@ -741,6 +821,7 @@ class Proj {
       clones.forEach(c => {
         if (c.hp > 0 && Math.abs(this.x - c.x) < 25 && Math.abs(this.y - c.y) < 25) {
           let damage = 20;
+          if (this.type === "yami") damage = 45;
           if (this.isOrb) damage = 5;
           if (this.type === "asta" && this.transformed) damage = 21;
           if (this.type === "noelle" && this.transformed) damage = 20.4;
@@ -755,7 +836,16 @@ class Proj {
     }
 
     if (this.own === "e" && player && player.inv === 0) {
-      if (this.x > player.x - 10 && this.x < player.x + player.w + 10 && this.y > player.y - 10 && this.y < player.y + player.h + 10) {
+      // Check if absorbed by black hole
+      let absorbed = false;
+      blackHoles.forEach(bh => {
+        if (bh.active && Math.hypot(this.x - bh.x, this.y - bh.y) < 100) {
+          absorbed = true;
+          this.t = 0;
+        }
+      });
+      
+      if (!absorbed && this.x > player.x - 10 && this.x < player.x + player.w + 10 && this.y > player.y - 10 && this.y < player.y + player.h + 10) {
         player.dmg(15);
         this.t = 0;
       }
@@ -788,6 +878,12 @@ class Proj {
         ctx.fillStyle = this.col;
         ctx.fillRect(-25, -4, 50, 8);
       }
+    } else if (this.type === "yami") {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(-30, -5, 60, 10);
+      ctx.strokeStyle = "#333";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-30, -5, 60, 10);
     } else {
       const spr = IMG.licht_attack;
       if (spr.complete && spr.width > 0) {
@@ -825,6 +921,7 @@ class Boss {
       }
       
       if (stats.wins >= 10) unlockAchievement("win10");
+      if (stats.wins >= 25) unlockAchievement("win25");
       if (stats.wins >= 50) unlockAchievement("win50");
       
       return; 
@@ -956,6 +1053,59 @@ class Clone {
     ctx.restore();
     ctx.fillStyle = "#000"; ctx.fillRect(this.x - 22, this.y - 28, 44, 6);
     ctx.fillStyle = "#f00"; ctx.fillRect(this.x - 20, this.y - 26, 40 * (this.hp / this.maxhp), 2);
+  }
+}
+
+class BlackHole {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = 360;
+    this.active = true;
+    this.radius = 30;
+  }
+
+  upd() {
+    this.life--;
+    if (this.life <= 0) this.active = false;
+    
+    if (player && player.type === "yami") {
+      this.x = player.x + 24;
+      this.y = player.y - 40;
+    }
+    
+    if (Math.random() < 0.3) {
+      addPart(this.x, this.y, "#000", 2);
+    }
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    
+    ctx.shadowBlur = 25;
+    ctx.shadowColor = "#000";
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius + 5, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = "#666";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius + 10, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 }
 
@@ -1255,11 +1405,28 @@ function loop() {
     ctx.fillText("Loading... " + loaded + "/" + total, 640, 360); ctx.textAlign = "left";
     requestAnimationFrame(loop); return;
   }
+  
+  // Check for cheat menu activation (Shift + L + 8)
+  if (keys.shift && keys.l && keys["8"]) {
+    cheatMenuOpen = !cheatMenuOpen;
+    keys.shift = false;
+    keys.l = false;
+    keys["8"] = false;
+  }
 
   if (hitStop > 0) { hitStop--; requestAnimationFrame(loop); return; }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (shake > 0) { ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake); shake--; }
+  
+  // Screen invert effect
+  if (invertScreen > 0) {
+    invertScreen--;
+    ctx.filter = "invert(1)";
+  } else {
+    ctx.filter = "none";
+  }
+  
   ctx.clearRect(0, 0, 1280, 720);
 
   if (state === "title") {
@@ -1360,13 +1527,14 @@ function loop() {
       ctx.fillText("Wins: " + stats.wins, 640, 240);
       ctx.fillText("Losses: " + stats.losses, 640, 300);
       
-      const totalPlays = stats.astaPlays + stats.noellePlays + stats.luckPlays;
+      const totalPlays = stats.astaPlays + stats.noellePlays + stats.luckPlays + stats.yamiPlays;
       let mostUsed = "None";
       if (totalPlays > 0) {
-        const maxPlays = Math.max(stats.astaPlays, stats.noellePlays, stats.luckPlays);
+        const maxPlays = Math.max(stats.astaPlays, stats.noellePlays, stats.luckPlays, stats.yamiPlays);
         if (stats.astaPlays === maxPlays) mostUsed = "Asta";
         else if (stats.noellePlays === maxPlays) mostUsed = "Noelle";
-        else mostUsed = "Luck";
+        else if (stats.luckPlays === maxPlays) mostUsed = "Luck";
+        else mostUsed = "Yami";
       }
       ctx.fillText("Most Used: " + mostUsed, 640, 360);
       
@@ -1401,26 +1569,35 @@ function loop() {
     ctx.fillStyle = "#fff"; ctx.font = "bold 42px Arial"; ctx.textAlign = "center";
     ctx.fillText("SELECT YOUR FIGHTER", 640, 140);
     chars.forEach((c, i) => {
-      const y = 240 + i * 100, sel = i === selected;
+      const y = 240 + i * 90, sel = i === selected;
+      const locked = c.locked && !achievements.win25;
       ctx.fillStyle = sel ? "rgba(255,215,0,0.2)" : "rgba(255,255,255,0.05)";
-      ctx.fillRect(390, y - 40, 500, 80);
-      ctx.strokeStyle = sel ? "#fd7" : "#666"; ctx.lineWidth = 3; ctx.strokeRect(390, y - 40, 500, 80);
-      ctx.fillStyle = c.lock ? "#666" : (sel ? c.col : "#aaa"); ctx.font = "bold 32px Arial";
+      ctx.fillRect(390, y - 40, 500, 70);
+      ctx.strokeStyle = locked ? "#444" : (sel ? "#fd7" : "#666");
+      ctx.lineWidth = 3; ctx.strokeRect(390, y - 40, 500, 70);
+      ctx.fillStyle = locked ? "#666" : (sel ? c.col : "#aaa");
+      ctx.font = "bold 32px Arial";
       ctx.fillText(c.name, 490, y + 5);
-      ctx.font = "18px Arial"; ctx.fillStyle = c.lock ? "#444" : "#888"; ctx.fillText(c.info, 490, y + 30);
+      ctx.font = "18px Arial";
+      ctx.fillStyle = locked ? "#444" : "#888";
+      ctx.fillText(locked ? "LOCKED - GET 25 WINS" : c.info, 490, y + 30);
     });
-    ctx.font = "18px Arial"; ctx.fillStyle = "#888"; ctx.fillText("W/S: Select | ENTER: Confirm", 640, 600);
-    if (keys.w && !keys.wp) { selected = (selected + 2) % 3; keys.wp = true; }
+    ctx.font = "18px Arial"; ctx.fillStyle = "#888"; ctx.fillText("W/S: Select | ENTER: Confirm", 640, 640);
+    if (keys.w && !keys.wp) { selected = (selected + chars.length - 1) % chars.length; keys.wp = true; }
     if (!keys.w) keys.wp = false;
-    if (keys.s && !keys.sp) { selected = (selected + 1) % 3; keys.sp = true; }
+    if (keys.s && !keys.sp) { selected = (selected + 1) % chars.length; keys.sp = true; }
     if (!keys.s) keys.sp = false;
-    if (keys.enter && !enterPrev && !chars[selected].lock) {
-      player = new Player(chars[selected]); boss = new Boss();
-      wasHit = false;
-      if (chars[selected].id === "asta") stats.astaPlays++;
-      else if (chars[selected].id === "noelle") stats.noellePlays++;
-      else if (chars[selected].id === "luck") stats.luckPlays++;
-      proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; homingProj.length = 0; lightningPulses.length = 0; phase = 1; combo = 0; state = "play";
+    if (keys.enter && !enterPrev) {
+      const ch = chars[selected];
+      if (!(ch.locked && !achievements.win25)) {
+        player = new Player(ch); boss = new Boss();
+        wasHit = false;
+        if (ch.id === "asta") stats.astaPlays++;
+        else if (ch.id === "noelle") stats.noellePlays++;
+        else if (ch.id === "luck") stats.luckPlays++;
+        else if (ch.id === "yami") stats.yamiPlays++;
+        proj.length = 0; clones.length = 0; part.length = 0; dragons.length = 0; homingProj.length = 0; lightningPulses.length = 0; blackHoles.length = 0; phase = 1; combo = 0; state = "play";
+      }
     }
     ctx.textAlign = "left";
   }
@@ -1447,6 +1624,10 @@ function loop() {
       lightningPulses[i].upd();
       if (lightningPulses[i].life <= 0) lightningPulses.splice(i, 1);
     }
+    for (let i = blackHoles.length - 1; i >= 0; i--) {
+      blackHoles[i].upd();
+      if (!blackHoles[i].active) blackHoles.splice(i, 1);
+    }
     for (let i = proj.length - 1; i >= 0; i--) { proj[i].upd(); if (proj[i].t <= 0) proj.splice(i, 1); }
     updPart(); drawPart();
     updateAchievementPopups();
@@ -1454,6 +1635,7 @@ function loop() {
     dragons.forEach(d => d.draw());
     homingProj.forEach(h => h.draw());
     lightningPulses.forEach(lp => lp.draw());
+    blackHoles.forEach(bh => bh.draw());
     boss.draw(); player.draw();
     proj.forEach(p => p.draw());
     ctx.restore();
@@ -1478,6 +1660,7 @@ function loop() {
     ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "14px Arial";
     const abilityText = player.type === "asta" ? "Q: Demon Slash | E: Black Meteorite | R: Black Form" : 
                         player.type === "noelle" ? "Q: Sea Dragon | E: Shield | R: Valkyrie Dress" :
+                        player.type === "yami" ? "Q: Dimensional Slash | E: Black Hole" :
                         "T: Lightning Pulse | E: Lightning Dash | R: True Lightning";
     ctx.fillText("A/D: Move | SPACE: Jump | SHIFT: Dash | CLICK: Attack | " + abilityText, 20, 700);
     
@@ -1501,12 +1684,13 @@ function loop() {
       let maxCool = 300;
       if (player.type === "noelle") maxCool = 600;
       if (player.type === "luck") maxCool = 240;
+      if (player.type === "yami") maxCool = 480;
       const cooldownPercent = player.specialCooldown / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(150, 600, 150, 30);
       ctx.fillStyle = "#666";
       ctx.fillRect(155, 605, 140, 20);
-      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
+      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : (player.type === "yami" ? "#000" : "#4af"));
       ctx.fillStyle = coolCol;
       ctx.fillRect(155, 605, 140 * (1 - cooldownPercent), 20);
       ctx.strokeStyle = "#fff";
@@ -1514,30 +1698,46 @@ function loop() {
       ctx.strokeRect(155, 605, 140, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
-      const abilityName = player.type === "asta" ? "DEMON SLASH" : (player.type === "luck" ? "LIGHTNING PULSE" : "SEA DRAGON");
+      const abilityName = player.type === "asta" ? "DEMON SLASH" : (player.type === "luck" ? "LIGHTNING PULSE" : (player.type === "yami" ? "DIMENSION SLASH" : "SEA DRAGON"));
       ctx.fillText(abilityName + ": " + Math.ceil(player.specialCooldown / 60) + "s", 160, 618);
     }
     
     if (player.shieldActive > 0 && player.type === "asta") {
-    } else if (player.shieldCooldown > 0) {
+    } else if (player.shieldCooldown > 0 || player.blackHoleActive > 0) {
       let maxCool = 420;
       if (player.type === "noelle") maxCool = 480;
       if (player.type === "luck") maxCool = 300;
-      const cooldownPercent = player.shieldCooldown / maxCool;
+      if (player.type === "yami") maxCool = 360;
+      
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(310, 600, 170, 30);
       ctx.fillStyle = "#666";
       ctx.fillRect(315, 605, 160, 20);
-      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
+      
+      const coolCol = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : (player.type === "yami" ? "#000" : "#4af"));
       ctx.fillStyle = coolCol;
-      ctx.fillRect(315, 605, 160 * (1 - cooldownPercent), 20);
+      
+      if (player.blackHoleActive > 0) {
+        const activePercent = player.blackHoleActive / 360;
+        ctx.fillRect(315, 605, 160 * activePercent, 20);
+      } else {
+        const cooldownPercent = player.shieldCooldown / maxCool;
+        ctx.fillRect(315, 605, 160 * (1 - cooldownPercent), 20);
+      }
+      
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
       ctx.strokeRect(315, 605, 160, 20);
       ctx.fillStyle = "#fff";
       ctx.font = "12px Arial";
-      const abilityName = player.type === "asta" ? "METEORITE" : (player.type === "luck" ? "LIGHTNING DASH" : "SHIELD");
-      ctx.fillText(abilityName + ": " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
+      
+      const abilityName = player.type === "asta" ? "METEORITE" : (player.type === "luck" ? "LIGHTNING DASH" : (player.type === "yami" ? "BLACK HOLE" : "SHIELD"));
+      
+      if (player.blackHoleActive > 0) {
+        ctx.fillText(abilityName + ": " + Math.ceil(player.blackHoleActive / 60) + "s", 320, 618);
+      } else if (player.shieldCooldown > 0) {
+        ctx.fillText(abilityName + ": " + Math.ceil(player.shieldCooldown / 60) + "s", 320, 618);
+      }
     } else if (player.type === "noelle" && player.shieldActive > 0) {
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(310, 600, 170, 30);
@@ -1555,6 +1755,7 @@ function loop() {
       let maxCool = 120;
       if (player.type === "noelle") maxCool = 90;
       if (player.type === "luck") maxCool = 72;
+      if (player.type === "yami") maxCool = 150;
       const coolPercent = player.cool / maxCool;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(490, 600, 140, 30);
@@ -1571,28 +1772,30 @@ function loop() {
     }
     
     const transformColor = player.type === "asta" ? "#f00" : (player.type === "luck" ? "#0ff" : "#4af");
-    ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(950, 600, 300, 40);
-    ctx.fillStyle = "#666";
-    ctx.fillRect(960, 610, 280, 20);
-    ctx.fillStyle = transformColor;
-    ctx.fillRect(960, 610, 280 * (player.transformMeter / 600), 20);
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(960, 610, 280, 20);
-    ctx.fillStyle = "#fff";
-    ctx.font = "14px Arial";
-    ctx.textAlign = "center";
-    const transformText = player.transformed ? "TRANSFORMED!" : (player.transformUsed ? "ALREADY USED" : (player.transformMeter >= 600 ? "R: TRANSFORM" : "TRANSFORM"));
-    ctx.fillText(transformText, 1100, 625);
-    ctx.textAlign = "left";
-    
-    if (player.transformed) {
+    if (player.type !== "yami") {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(950, 600, 300, 40);
+      ctx.fillStyle = "#666";
+      ctx.fillRect(960, 610, 280, 20);
       ctx.fillStyle = transformColor;
-      ctx.font = "12px Arial";
+      ctx.fillRect(960, 610, 280 * (player.transformMeter / 600), 20);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(960, 610, 280, 20);
+      ctx.fillStyle = "#fff";
+      ctx.font = "14px Arial";
       ctx.textAlign = "center";
-      ctx.fillText("Time: " + Math.ceil(player.transformTime / 60) + "s", 1100, 607);
+      const transformText = player.transformed ? "TRANSFORMED!" : (player.transformUsed ? "ALREADY USED" : (player.transformMeter >= 600 ? "R: TRANSFORM" : "TRANSFORM"));
+      ctx.fillText(transformText, 1100, 625);
       ctx.textAlign = "left";
+      
+      if (player.transformed) {
+        ctx.fillStyle = transformColor;
+        ctx.font = "12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Time: " + Math.ceil(player.transformTime / 60) + "s", 1100, 607);
+        ctx.textAlign = "left";
+      }
     }
     
     // Draw achievement popups
@@ -1611,6 +1814,50 @@ function loop() {
     ctx.fillText("Press ENTER to return to menu", 640, 500);
     if (keys.enter && !enterPrev) { state = "menu"; menuState = "main"; selected = 0; }
     ctx.textAlign = "left";
+  }
+  
+  // Draw cheat menu
+  if (cheatMenuOpen) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    
+    // Background overlay
+    ctx.fillStyle = "rgba(0,0,0,0.85)";
+    ctx.fillRect(0, 0, 1280, 720);
+    
+    // Cheat menu box
+    ctx.fillStyle = "rgba(20,20,20,0.95)";
+    ctx.fillRect(390, 200, 500, 320);
+    ctx.strokeStyle = "#f00";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(390, 200, 500, 320);
+    
+    // Title
+    ctx.fillStyle = "#f00";
+    ctx.font = "bold 36px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("CHEAT MENU", 640, 250);
+    
+    // Options
+    ctx.font = "24px Arial";
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Press U: Unlock All Achievements", 640, 320);
+    
+    ctx.fillStyle = "#888";
+    ctx.font = "18px Arial";
+    ctx.fillText("(Shift + L + 8 to close)", 640, 480);
+    
+    ctx.textAlign = "left";
+    ctx.restore();
+    
+    // Unlock all achievements
+    if (keys.u) {
+      Object.keys(achievements).forEach(key => {
+        achievements[key] = true;
+      });
+      stats.wins = 50; // Ensure all win achievements work
+      keys.u = false;
+    }
   }
 
   enterPrev = keys.enter;
